@@ -1,0 +1,40 @@
+{
+  "rootBackground": { "type": "video", "src": "/assets/bg-bw.mp4" },
+  "root": [
+    {
+      "name": "Spotify",
+      "art": "/assets/slides/1spoty.webp",
+      "children": [],
+      "link": "https://open.spotify.com/artist/7oRULWYKcTeuJhxKhJqDyi?si=cZZvtQe2QiKizAq6LUe6rw",
+      "background": { "type": "custom" }
+    },
+    {
+      "name": "Instagram",
+      "art": "/assets/slides/1ig.webp",
+      "children": [],
+      "link": "https://instagram.com",
+      "background": { "type": "custom" }
+    },
+    {
+      "name": "YouTube",
+      "art": "/assets/slides/1yt.webp",
+      "children": [],
+      "link": "https://youtube.com",
+      "background": { "type": "custom" }
+    },
+    {
+      "name": "Git",
+      "art": "/assets/slides/1git.webp",
+      "children": [],
+      "link": "https://github.com",
+      "background": { "type": "custom" }
+    },
+    {
+      "name": "TikTok",
+      "art": "/assets/slides/1tiktok.webp",
+      "children": [],
+      "link": "https://github.com",
+      "background": { "type": "custom" }
+    }
+  ]
+}

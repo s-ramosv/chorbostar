@@ -1,0 +1,9 @@
+# Easiest path: connect this repo to Netlify, set "Base directory" to `app` (if the repo root is above `app`).
+# Or open the `app` folder as the site root in Netlify and this file is picked up automatically.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "24"

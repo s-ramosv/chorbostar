@@ -1,0 +1,11 @@
+Model Information:
+* title:	Xbox Logo
+* source:	https://sketchfab.com/3d-models/xbox-logo-0c822a93c86d43c38276b13f2592f1b1
+* author:	Sir2Yas (https://sketchfab.com/yas2yas)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Xbox Logo" (https://sketchfab.com/3d-models/xbox-logo-0c822a93c86d43c38276b13f2592f1b1) by Sir2Yas (https://sketchfab.com/yas2yas) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
