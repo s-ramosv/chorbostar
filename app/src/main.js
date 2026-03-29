@@ -455,7 +455,33 @@ if (sitIdleCharacter.enabled) {
       wrapper.add(group)
       wrapper.position.set(wrapperPosition.x, wrapperPosition.y, wrapperPosition.z)
       wrapper.rotation.set(wrapperRotation.x, wrapperRotation.y, wrapperRotation.z)
-      overlayScene.add(wrapper)
+      const behindSlides = sitIdleCharacter.renderBehindSlides === true
+      const idleHostScene = behindSlides ? scene : overlayScene
+      if (behindSlides) {
+        if (scene.environment == null && overlayScene.environment) {
+          scene.environment = overlayScene.environment
+        }
+        // Slides are mostly MeshBasicMaterial; these only meaningfully light the sit-idle PBR meshes.
+        if (!scene.userData.sitIdleMainLights) {
+          const lightGroup = new THREE.Group()
+          lightGroup.name = 'sit-idle-main-lights'
+          lightGroup.add(new THREE.AmbientLight(0xffffff, 0.5))
+          const dir = new THREE.DirectionalLight(0xffffff, 0.55)
+          dir.position.set(2, 5, 4)
+          lightGroup.add(dir)
+          const fill = new THREE.DirectionalLight(0xffffff, 0.2)
+          fill.position.set(-2, 2, 3)
+          lightGroup.add(fill)
+          const lf = new THREE.DirectionalLight(0xffffff, 4)
+          lf.position.set(-3, 1, -1)
+          lf.target.position.set(-0.5, -2, -2.5)
+          lightGroup.add(lf)
+          lightGroup.add(lf.target)
+          scene.add(lightGroup)
+          scene.userData.sitIdleMainLights = lightGroup
+        }
+      }
+      idleHostScene.add(wrapper)
       if (group.animations && group.animations.length > 0) {
         const mixer = new THREE.AnimationMixer(group)
         group.animations.forEach((clip) => mixer.clipAction(clip).play())
@@ -1522,16 +1548,29 @@ let stackDragLastRawF = null
 let stackDragForwardHint = true
 /** Smoothed displayed index (lerps toward magnetic target each move). */
 let stackDragDisplayF = 0
+/** Previous raw (pre-magnetic) float index; used to detect crossing `slideStackMagneticCommit`. */
+let stackDragMagPrevRawF = null
 
 function stackScrubUsesHorizontalAxis() {
   return layoutProfile.slideStackDragAxis === 'horizontal'
+}
+
+function stackScrubHorizontalSign() {
+  const s = layoutProfile.slideStackDragHorizontalSign
+  return s === -1 ? -1 : 1
 }
 
 function stackScrubRawF(clientX, clientY, baseline, px) {
   const n = numSlides()
   const hi = Math.max(0, n - 1)
   if (stackScrubUsesHorizontalAxis()) {
-    return THREE.MathUtils.clamp(baseline + (clientX - stackDragAnchorX) / px, 0, hi)
+    const sx = stackScrubHorizontalSign()
+    // sx=1: finger +X → higher index (ArrowRight). sx=-1 inverts (see layoutProfile.slideStackDragHorizontalSign).
+    return THREE.MathUtils.clamp(
+      baseline + (sx * (clientX - stackDragAnchorX)) / px,
+      0,
+      hi
+    )
   }
   return THREE.MathUtils.clamp(baseline + (stackDragAnchorY - clientY) / px, 0, hi)
 }
@@ -1542,8 +1581,45 @@ function applyHorizontalScrubLogoSpin(clientX) {
   const dlx = clientX - stackDragLastClientXForLogo
   stackDragLastClientXForLogo = clientX
   if (Math.abs(dlx) < 1e-4) return
-  // Direct angle so scrub rotation isn’t cancelled by the logo ω lerp toward nav idle.
-  logoSpinAngle += dlx * radPerPx
+  // Opposite sign vs slide scrub: world-Y spin direction for this mesh reads better inverted from finger X.
+  logoSpinAngle -= stackScrubHorizontalSign() * dlx * radPerPx
+}
+
+/**
+ * When raw slide fraction crosses the magnetic sticky boundary, fire the same logo stimulus as arrow keys
+ * (`triggerLogoStimulus` → `logoNavStimulus` / `omegaTarget` ramp and `LOGO_STIMULUS_DECAY` coast-down).
+ */
+function maybeTriggerMagneticCommitLogoStimulus(rawF) {
+  const commit = layoutProfile.slideStackMagneticCommit
+  if (commit == null || commit <= 0) return
+  if (layoutProfile.slideStackMagneticLogoStimulusOnCommit === false) return
+
+  const n = numSlides()
+  const maxF = Math.max(0, n - 1)
+  const rf = THREE.MathUtils.clamp(rawF, 0, maxF)
+  const k = Math.floor(rf)
+  const u = rf - k
+
+  if (stackDragMagPrevRawF == null) {
+    stackDragMagPrevRawF = rf
+    return
+  }
+
+  const prf = stackDragMagPrevRawF
+  const pk = Math.floor(prf)
+  const pu = prf - pk
+
+  if (k === pk && k < n - 1) {
+    const c = THREE.MathUtils.clamp(commit, 0.04, 0.48)
+    const delta = rf - prf
+    if (delta > 1e-7 && pu <= c && u > c) {
+      triggerLogoStimulus(1)
+    } else if (delta < -1e-7 && pu >= 1 - c && u < 1 - c) {
+      triggerLogoStimulus(-1)
+    }
+  }
+
+  stackDragMagPrevRawF = rf
 }
 
 /**
@@ -2209,6 +2285,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   if (stackDragActive) {
     const px = layoutProfile.slideStackDragPxPerSlide ?? 52
     const rawF = stackScrubRawF(e.clientX, e.clientY, stackDragBaselineFloat, px)
+    maybeTriggerMagneticCommitLogoStimulus(rawF)
     const fMag = applyMagneticToRawSlideIndex(rawF)
     const follow = layoutProfile.slideStackMagneticFollow ?? 1
     stackDragDisplayF = THREE.MathUtils.lerp(stackDragDisplayF, fMag, Math.min(1, follow))
@@ -2272,6 +2349,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     stackDragActive = false
     stackDragCandidate = true
     stackDragLastRawF = null
+    stackDragMagPrevRawF = null
     killStackSnapTween()
   }
 })

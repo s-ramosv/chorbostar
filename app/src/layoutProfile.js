@@ -18,12 +18,14 @@
  * @property {number} [slideStackDragPxPerSlide] — finger px per 1.0 slide index along scrub axis
  * @property {number} [slideStackDragArmPx] — min px along scrub axis before scrub replaces tilt
  * @property {number} [slideStackLogoSpinPerPx] — horizontal scrub only: world-Y spin (rad) per horizontal px
+ * @property {1 | -1} [slideStackDragHorizontalSign] — multiply horizontal scrub delta; `-1` inverts (e.g. finger right decreases index)
  * @property {number} [slideStackSnapDuration] — gsap seconds to snap to integer slide (0 = instant)
  * @property {string} [slideStackSnapEase] — gsap ease name for release snap (e.g. expo.out)
  * @property {number} [slideStackMagneticCommit] — 0–0.49: fraction of inter-slide travel that feels “sticky”; 0 = linear (off)
  * @property {number} [slideStackMagneticStickPower] — >1 = more resistance before commit
  * @property {number} [slideStackMagneticPullPower] — >1 = stronger ease into the next slide after commit
  * @property {number} [slideStackMagneticFollow] — 0–1 lerp per move toward magnetic target (1 = no extra smoothing)
+ * @property {boolean} [slideStackMagneticLogoStimulusOnCommit] — if not `false`, magnetic `commit` crossings call `triggerLogoStimulus` (same ramp/decay as Arrow Left/Right)
  * @property {boolean} clearHoverOnPointerEnd — reset tilt/hover when pointer lifts (touch UX)
  * @property {{ fov: number, position: { x: number, y: number, z: number } }} camera
  * @property {object} stack — passed into main `stackLayout` (curve + optional overrides below)
@@ -131,8 +133,8 @@ function mobileStack() {
     scale,
     plane: /** @type {StackCurvePlane} */ ('yz'),
     curveUseCustomEnd: true,
-    curveStart: { x: -0.10, y: -0.3, z: 0 },
-    curveEnd: { x: 5.8, y: -1, z: -9 },
+    curveStart: { x: -0.10, y: -0.6, z: 0 },
+    curveEnd: { x: 5.8, y: -1.5, z: -9 },
     curveBend: 0,
     curveVerticalBend: 0,
     slotSpreadExponent: 0.3,
@@ -176,6 +178,8 @@ function mobileProfile() {
     swipeThresholdPx: 0,
     swipeDominanceRatio: 0.2,
     slideStackDragAxis: 'horizontal',
+    /** `-1` inverts horizontal scrub vs default (`1` = finger right → higher index, same as ArrowRight). */
+    slideStackDragHorizontalSign: -1,
     /** Smaller = faster scrub through all slides for a given drag distance. */
     slideStackDragPxPerSlide: 80,
     slideStackDragArmPx: 0,
@@ -189,6 +193,8 @@ function mobileProfile() {
     slideStackMagneticPullPower: 5,
     /** Slight extra follow to avoid shimmer when direction wiggles. */
     slideStackMagneticFollow: 0.2,
+    /** Same logo kick/decay as arrow keys when scrub passes magnetic sticky zone (see `triggerLogoStimulus`). */
+    slideStackMagneticLogoStimulusOnCommit: true,
     clearHoverOnPointerEnd: true,
     /**
      * Header: size vs viewport + horizontal placement. See LayoutProfile JSDoc above for presets.
