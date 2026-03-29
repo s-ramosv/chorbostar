@@ -79,6 +79,16 @@ body,
   z-index: 2;
 }
 
+#app[data-layout-profile='mobile'] canvas {
+  touch-action: none;
+}
+
+#app[data-layout-profile='mobile'] .text-overlays-dock--top-right {
+  flex-direction: column;
+  align-items: flex-end;
+  align-content: flex-end;
+}
+
 /* Viewport-locked (not 3D); `object-position: top right` keeps the graphic pinned to the top-right when sized */
 .viewport-header-banner {
   position: fixed;

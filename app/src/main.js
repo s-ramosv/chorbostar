@@ -12,10 +12,16 @@ function createNeutralEnvMap(renderer) {
   return envMap
 }
 import { loadGltfModel } from './gltfModel.js'
-import { SCENE_OBJECT_CONFIGS, applySceneObjectBehaviour } from './sceneObjects.js'
+import { getSceneObjectConfigsForProfile, applySceneObjectBehaviour } from './sceneObjects.js'
 import slidesStructure from './slides-structure.json'
-import { mountTextOverlays } from './textOverlays.js'
+import { mountTextOverlays, TEXT_OVERLAYS_DESKTOP, TEXT_OVERLAYS_MOBILE } from './textOverlays.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
+import { resolveLayoutProfile } from './layoutProfile.js'
+import { getSitIdleCharacterConfig } from './sitIdleCharacterConfig.js'
+
+const layoutProfile = resolveLayoutProfile()
+const sceneObjectConfigs = getSceneObjectConfigsForProfile(layoutProfile.id)
+const sitIdleCharacter = getSitIdleCharacterConfig(layoutProfile.id)
 
 // Scene (no solid background so the background video shows through)
 const scene = new THREE.Scene()
@@ -40,11 +46,18 @@ overlayLeftFront.target.position.set(-0.5, -2, -2.5)
 overlayScene.add(overlayLeftFront)
 overlayScene.add(overlayLeftFront.target)
 
-// Camera
-const camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 1000)
-camera.position.z = 2.5
-camera.position.x = -0.6
-camera.position.y = 0.35
+// Camera (FOV / position from layout profile — desktop matches previous defaults)
+const camera = new THREE.PerspectiveCamera(
+  layoutProfile.camera.fov,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  1000
+)
+camera.position.set(
+  layoutProfile.camera.position.x,
+  layoutProfile.camera.position.y,
+  layoutProfile.camera.position.z
+)
 
 /** Subtle view tilt from pointer position (whole window), typical Three.js “mouse parallax”. */
 const CAMERA_PARALLAX_YAW_MAX = 0.02
@@ -71,6 +84,10 @@ function setCameraParallaxFromClient(clientX, clientY) {
 }
 
 function stepCameraParallax(delta) {
+  if (!layoutProfile.useWindowParallax) {
+    camera.rotation.set(cameraParallaxBaseRotX, cameraParallaxBaseRotY, cameraParallaxBaseRotZ)
+    return
+  }
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     camera.rotation.set(cameraParallaxBaseRotX, cameraParallaxBaseRotY, cameraParallaxBaseRotZ)
     return
@@ -92,6 +109,7 @@ const container = document.querySelector('#app')
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
 renderer.setClearColor(0x000000, 0)
 container.appendChild(renderer.domElement)
+container.setAttribute('data-layout-profile', layoutProfile.id)
 
 // Background layer elements (video, image, or custom per config)
 const bgVideo = document.getElementById('bg-video')
@@ -120,7 +138,10 @@ container.style.setProperty('--ui-fixed-text-px', `${VIEWPORT_UI_TEXT_PX}px`)
 container.style.setProperty('--ui-header-max-width-px', `${HEADER_WEB_IMAGE_MAX_WIDTH_PX}px`)
 container.style.setProperty('--ui-header-offset-y', `${HEADER_WEB_IMAGE_OFFSET_Y_PX}px`)
 
-mountTextOverlays(container, { viewportTextPx: VIEWPORT_UI_TEXT_PX })
+mountTextOverlays(container, {
+  viewportTextPx: VIEWPORT_UI_TEXT_PX,
+  overlays: layoutProfile.id === 'mobile' ? TEXT_OVERLAYS_MOBILE : TEXT_OVERLAYS_DESKTOP,
+})
 
 {
   const headerImg = document.createElement('img')
@@ -138,7 +159,7 @@ container.style.setProperty('--bg-hue-rotate', `${BACKGROUND_HUE_ROTATE_DEG}deg`
 
 // Background video: same ramp / coast idea as the Xbox logo (`LOGO_RAMP_*`), but **forward `playbackRate` only**
 // (no reverse playback — slide “back” still drives idle→fast forward via stimulus, never negative rate).
-const VIDEO_PLAYBACK_IDLE = 0.5        // `playbackRate` scale when nav stimulus is 0
+const VIDEO_PLAYBACK_IDLE = 0.5      // `playbackRate` scale when nav stimulus is 0
 const VIDEO_PLAYBACK_PEAK_EXTRA = 4  // extra scale when stimulus = 1 (pairs with `LOGO_NAV_PEAK_EXTRA` feel)
 const VIDEO_MAX_SIGNED_RATE = 8      // clamp on nonnegative `videoSignedPlaybackRate`
 /**
@@ -329,8 +350,15 @@ function setBackgroundForPath() {
     },
   })
 }
-renderer.setSize(window.innerWidth, window.innerHeight)
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+
+function syncRendererToWindow() {
+  camera.aspect = window.innerWidth / window.innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, layoutProfile.maxDpr))
+  renderer.setSize(window.innerWidth, window.innerHeight)
+}
+
+syncRendererToWindow()
 
 overlayScene.environment = createNeutralEnvMap(renderer)
 overlayScene.environmentIntensity = 0.45
@@ -339,10 +367,23 @@ const clock = new THREE.Clock()
 const animationMixers = []
 let sitIdleVideoTexture = null
 
-// 3D objects: load from SCENE_OBJECT_CONFIGS (see sceneObjects.js)
+// 3D objects: GLTF list from sceneObjects.js (`getSceneObjectConfigsForProfile` ← layoutProfile.id)
 overlayScene.add(camera)
 
-SCENE_OBJECT_CONFIGS.forEach((objConfig) => {
+function applySceneObjectMaterialOverrides(model, objConfig) {
+  const { materialRoughness, materialMetalness } = objConfig
+  if (materialRoughness == null && materialMetalness == null) return
+  model.traverse((child) => {
+    if (!child.isMesh || !child.material) return
+    const mats = Array.isArray(child.material) ? child.material : [child.material]
+    for (const mat of mats) {
+      if (materialRoughness != null && 'roughness' in mat) mat.roughness = materialRoughness
+      if (materialMetalness != null && 'metalness' in mat) mat.metalness = materialMetalness
+    }
+  })
+}
+
+sceneObjectConfigs.forEach((objConfig) => {
   loadGltfModel(scene, objConfig.url, {
     position: { x: 0, y: 0, z: 0 },
     scale: objConfig.scale,
@@ -350,6 +391,7 @@ SCENE_OBJECT_CONFIGS.forEach((objConfig) => {
     overlayScene: objConfig.scene === 'overlay' ? overlayScene : undefined,
     onLoad: (model) => {
       objConfig.model = model
+      applySceneObjectMaterialOverrides(model, objConfig)
       if (objConfig.position?.mode === 'camera') {
         overlayScene.remove(model)
         camera.add(model)
@@ -358,95 +400,94 @@ SCENE_OBJECT_CONFIGS.forEach((objConfig) => {
   }).catch(() => {})
 })
 
-// FBX model with animation (Sitting Idle) – file lives in assets/3D/sit-idle/
-const fbxLoader = new FBXLoader()
-fbxLoader.setPath('/assets/3D/sit-idle/')
-fbxLoader.load(
-  encodeURI('Sitting Idle.fbx'),
-  (group) => {
-    const box = new THREE.Box3().setFromObject(group)
-    const center = new THREE.Vector3()
-    box.getCenter(center)
-    group.position.sub(center)
-    // Mixamo-style FBX often in cm; scale down so ~1–2 units tall in view
-    const size = new THREE.Vector3()
-    box.getSize(size)
-    const maxDim = Math.max(size.x, size.y, size.z, 1)
-    const fbxScale = 9.5 // increase to make the character bigger (e.g. 2, 3)
-    const sitIdleMirrorX = -1 // -1 = mirror left/right, 1 = normal
-    const sitIdleMirrorTextureX = -1 // -1 = mirror video left/right (e.g. match character mirror), 1 = normal
-    group.scale.setScalar(fbxScale / maxDim)
-    group.scale.x *= sitIdleMirrorX
-    const wrapper = new THREE.Group()
-    wrapper.add(group)
-    // In front of camera (camera at ~z=4): slightly left, low, and forward
-    wrapper.position.set(1, -2.6, -4)
-    // Rotation in radians: X = tilt, Y = spin left/right, Z = roll (e.g. Math.PI = 180°)
-    wrapper.rotation.set(Math.PI/64, -Math.PI/16, 0)
-    overlayScene.add(wrapper)
-    if (group.animations && group.animations.length > 0) {
-      const mixer = new THREE.AnimationMixer(group)
-      group.animations.forEach((clip) => mixer.clipAction(clip).play())
-      animationMixers.push(mixer)
-    }
-    // Apply video as diffuse texture and keep normal map for lighting/silhouette
-    const SIT_IDLE_BASE = '/assets/3D/sit-idle/'
-    const video = document.createElement('video')
-    video.src = SIT_IDLE_BASE + encodeURI('texture8.mp4')
-    video.loop = true
-    video.muted = true
-    video.playsInline = true
-    video.play().catch((e) => console.warn('Sit-idle video texture autoplay:', e))
-    const videoTex = new THREE.VideoTexture(video)
-    videoTex.colorSpace = THREE.SRGBColorSpace
-    videoTex.minFilter = THREE.LinearFilter
-    videoTex.magFilter = THREE.LinearFilter
-    // Clamp so the video doesn’t tile and break up; deforms with mesh UVs only
-    videoTex.wrapS = videoTex.wrapT = THREE.ClampToEdgeWrapping
-    // Tweak to fit your character’s UV layout: lower repeat = zoom in; sitIdleMirrorTextureX flips video horizontally
-    videoTex.repeat.set(sitIdleMirrorTextureX, 1)
-    videoTex.offset.set(sitIdleMirrorTextureX === -1 ? 1 : 0, 0)
-    sitIdleVideoTexture = videoTex
-    const texLoader = new THREE.TextureLoader().setPath(SIT_IDLE_BASE)
-    const normalTex = texLoader.load(encodeURI('tripo_normal_96033f95-3167-4070-bcee-43528d052148.jpg'), undefined, undefined, (e) => console.warn('Sit-idle normal texture failed', e))
-    group.traverse((child) => {
-      if (!child.isMesh || !child.material) return
-      const materials = Array.isArray(child.material) ? child.material : [child.material]
-      const newMats = materials.map((mat) => {
-        return new THREE.MeshStandardMaterial({
-          map: videoTex,
-          normalMap: normalTex,
-          color: mat.color ? mat.color.clone() : 0xffffff,
-          roughness: 0.0,
-          metalness: 0.0,
-        })
-      })
-      child.material = newMats.length === 1 ? newMats[0] : newMats
-    })
-    // Project video from the front (one coherent image, no camouflage): UVs from world X/Y
-    wrapper.updateMatrixWorld(true)
-    const projBox = new THREE.Box3().setFromObject(group)
-    const projSize = new THREE.Vector3()
-    projBox.getSize(projSize)
-    const dx = Math.max(projSize.x, 1e-5)
-    const dy = Math.max(projSize.y, 1e-5)
-    const _worldPos = new THREE.Vector3()
-    group.traverse((child) => {
-      if (!child.isMesh || !child.geometry?.attributes?.position) return
-      const geo = child.geometry
-      const pos = geo.attributes.position
-      const uvs = new Float32Array(pos.count * 2)
-      for (let i = 0; i < pos.count; i++) {
-        _worldPos.fromBufferAttribute(pos, i).applyMatrix4(child.matrixWorld)
-        uvs[i * 2] = (_worldPos.x - projBox.min.x) / dx
-        uvs[i * 2 + 1] = (_worldPos.y - projBox.min.y) / dy
+// FBX animated character — desktop vs mobile file + params in `sitIdleCharacterConfig.js`
+const sitIdleBaseUrl = `${import.meta.env.BASE_URL || '/'}`.replace(/\/?$/, '/')
+const SIT_IDLE_BASE = `${sitIdleBaseUrl}assets/3D/sit-idle/`
+if (sitIdleCharacter.enabled) {
+  const fbxLoader = new FBXLoader()
+  fbxLoader.setPath(SIT_IDLE_BASE)
+  fbxLoader.load(
+    encodeURI(sitIdleCharacter.fbxFile),
+    (group) => {
+      const box = new THREE.Box3().setFromObject(group)
+      const center = new THREE.Vector3()
+      box.getCenter(center)
+      group.position.sub(center)
+      const size = new THREE.Vector3()
+      box.getSize(size)
+      const maxDim = Math.max(size.x, size.y, size.z, 1)
+      const { fbxScale, mirrorX, mirrorTextureX, wrapperPosition, wrapperRotation } = sitIdleCharacter
+      group.scale.setScalar(fbxScale / maxDim)
+      group.scale.x *= mirrorX
+      const wrapper = new THREE.Group()
+      wrapper.add(group)
+      wrapper.position.set(wrapperPosition.x, wrapperPosition.y, wrapperPosition.z)
+      wrapper.rotation.set(wrapperRotation.x, wrapperRotation.y, wrapperRotation.z)
+      overlayScene.add(wrapper)
+      if (group.animations && group.animations.length > 0) {
+        const mixer = new THREE.AnimationMixer(group)
+        group.animations.forEach((clip) => mixer.clipAction(clip).play())
+        animationMixers.push(mixer)
       }
-      geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-    })
-  },
-  undefined,
-  (err) => console.error('FBX load failed:', err)
-)
+      const video = document.createElement('video')
+      video.src = SIT_IDLE_BASE + encodeURI(sitIdleCharacter.videoFile)
+      video.loop = true
+      video.muted = true
+      video.playsInline = true
+      video.play().catch((e) => console.warn('Sit-idle video texture autoplay:', e))
+      const videoTex = new THREE.VideoTexture(video)
+      videoTex.colorSpace = THREE.SRGBColorSpace
+      videoTex.minFilter = THREE.LinearFilter
+      videoTex.magFilter = THREE.LinearFilter
+      videoTex.wrapS = videoTex.wrapT = THREE.ClampToEdgeWrapping
+      videoTex.repeat.set(mirrorTextureX, 1)
+      videoTex.offset.set(mirrorTextureX === -1 ? 1 : 0, 0)
+      sitIdleVideoTexture = videoTex
+      const texLoader = new THREE.TextureLoader().setPath(SIT_IDLE_BASE)
+      const normalTex = texLoader.load(
+        encodeURI(sitIdleCharacter.normalMapFile),
+        undefined,
+        undefined,
+        (e) => console.warn('Sit-idle normal texture failed', e)
+      )
+      group.traverse((child) => {
+        if (!child.isMesh || !child.material) return
+        const materials = Array.isArray(child.material) ? child.material : [child.material]
+        const newMats = materials.map((mat) => {
+          return new THREE.MeshStandardMaterial({
+            map: videoTex,
+            normalMap: normalTex,
+            color: mat.color ? mat.color.clone() : 0xffffff,
+            roughness: 0.0,
+            metalness: 0.0,
+          })
+        })
+        child.material = newMats.length === 1 ? newMats[0] : newMats
+      })
+      wrapper.updateMatrixWorld(true)
+      const projBox = new THREE.Box3().setFromObject(group)
+      const projSize = new THREE.Vector3()
+      projBox.getSize(projSize)
+      const dx = Math.max(projSize.x, 1e-5)
+      const dy = Math.max(projSize.y, 1e-5)
+      const _worldPos = new THREE.Vector3()
+      group.traverse((child) => {
+        if (!child.isMesh || !child.geometry?.attributes?.position) return
+        const geo = child.geometry
+        const pos = geo.attributes.position
+        const uvs = new Float32Array(pos.count * 2)
+        for (let i = 0; i < pos.count; i++) {
+          _worldPos.fromBufferAttribute(pos, i).applyMatrix4(child.matrixWorld)
+          uvs[i * 2] = (_worldPos.x - projBox.min.x) / dx
+          uvs[i * 2 + 1] = (_worldPos.y - projBox.min.y) / dy
+        }
+        geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+      })
+    },
+    undefined,
+    (err) => console.error('FBX load failed:', err)
+  )
+}
 
 // Tree from config (single source of truth)
 const ROOT_GROUP = slidesStructure.root
@@ -479,28 +520,15 @@ function currentGroup() {
   return currentPage().group
 }
 
-// Slot positions: configurable curved trajectory from first slot to last slot.
-const X_START = -2.25
-const Z_START = 0
-const X_STEP = 1.7
-const Z_STEP = -0.8
-const SCALE = 1.33
+// Stack curve: mutable copy of `layoutProfile.stack` (tune in layoutProfile.js per desktop/mobile).
+const stackLayout = {
+  ...layoutProfile.stack,
+  curveStart: { ...layoutProfile.stack.curveStart },
+  curveEnd: { ...layoutProfile.stack.curveEnd },
+}
 
-// Curve controls for stack trajectory.
-// Keep defaults close to the current linear stack; tweak these to experiment.
-const STACK_CURVE_USE_CUSTOM_END = true
-const STACK_CURVE_START = { x: X_START * SCALE, y: -0.12, z: Z_START * SCALE }
-const STACK_CURVE_END = { x: 15, y: 1, z: -10.0 } // used when STACK_CURVE_USE_CUSTOM_END = true
-const STACK_CURVE_PLANE = 'xz' // 'xz' | 'xy' | 'yz'
-const STACK_CURVE_BEND = -1 // signed amount of curvature in plane units (0 = straight line)
-const STACK_CURVE_VERTICAL_BEND = 0 // secondary axis bend (e.g. arc lift/drop)
-/**
- * How slide indices map to position along the curve (0 = front, 1 = back along path).
- * 1 = even spacing in curve parameter (default).
- * >1 = pack slots toward the front → 1st covers 2nd more than (n−1) covers n.
- * <1 = pack toward the back → deeper pairs overlap more.
- */
-const STACK_SLOT_SPREAD_EXPONENT = 0.5
+let CARD_WIDTH = 1.4 * 1.5 * stackLayout.scale
+let CARD_HEIGHT = 1.4 * 1.5 * stackLayout.scale
 
 function normalizeVec3(v) {
   const len = Math.hypot(v.x, v.y, v.z)
@@ -519,28 +547,28 @@ function getCurveControlPoint(start, end) {
   const dz = end.z - start.z
 
   let perp = { x: 0, y: 0, z: 0 }
-  if (STACK_CURVE_PLANE === 'xy') {
+  if (stackLayout.plane === 'xy') {
     perp = normalizeVec3({ x: -dy, y: dx, z: 0 })
     return {
-      x: mid.x + perp.x * STACK_CURVE_BEND,
-      y: mid.y + perp.y * STACK_CURVE_BEND,
-      z: mid.z + STACK_CURVE_VERTICAL_BEND,
+      x: mid.x + perp.x * stackLayout.curveBend,
+      y: mid.y + perp.y * stackLayout.curveBend,
+      z: mid.z + stackLayout.curveVerticalBend,
     }
   }
-  if (STACK_CURVE_PLANE === 'yz') {
+  if (stackLayout.plane === 'yz') {
     perp = normalizeVec3({ x: 0, y: -dz, z: dy })
     return {
-      x: mid.x + STACK_CURVE_VERTICAL_BEND,
-      y: mid.y + perp.y * STACK_CURVE_BEND,
-      z: mid.z + perp.z * STACK_CURVE_BEND,
+      x: mid.x + stackLayout.curveVerticalBend,
+      y: mid.y + perp.y * stackLayout.curveBend,
+      z: mid.z + perp.z * stackLayout.curveBend,
     }
   }
   // Default: XZ plane
   perp = normalizeVec3({ x: -dz, y: 0, z: dx })
   return {
-    x: mid.x + perp.x * STACK_CURVE_BEND,
-    y: mid.y + STACK_CURVE_VERTICAL_BEND,
-    z: mid.z + perp.z * STACK_CURVE_BEND,
+    x: mid.x + perp.x * stackLayout.curveBend,
+    y: mid.y + stackLayout.curveVerticalBend,
+    z: mid.z + perp.z * stackLayout.curveBend,
   }
 }
 
@@ -557,17 +585,17 @@ function quadraticBezier3(p0, p1, p2, t) {
 
 function getSlotPositions(n) {
   if (n <= 0) return []
-  const start = STACK_CURVE_START
-  const end = STACK_CURVE_USE_CUSTOM_END
-    ? STACK_CURVE_END
+  const start = stackLayout.curveStart
+  const end = stackLayout.curveUseCustomEnd
+    ? stackLayout.curveEnd
     : {
-        x: (X_START + Math.max(0, n - 1) * X_STEP) * SCALE,
+        x: (stackLayout.xStart + Math.max(0, n - 1) * stackLayout.xStep) * stackLayout.scale,
         y: 0,
-        z: (Z_START + Math.max(0, n - 1) * Z_STEP) * SCALE,
+        z: (stackLayout.zStart + Math.max(0, n - 1) * stackLayout.zStep) * stackLayout.scale,
       }
   if (n === 1) return [{ x: start.x, y: start.y, z: start.z }]
   const control = getCurveControlPoint(start, end)
-  const p = STACK_SLOT_SPREAD_EXPONENT
+  const p = stackLayout.slotSpreadExponent
   return Array.from({ length: n }, (_, i) => {
     const linear = i / (n - 1)
     const t = p === 1 ? linear : Math.pow(linear, p)
@@ -749,9 +777,6 @@ function getDurationForDirection(direction) {
   return Math.max(MIN_DURATION, BASE_DURATION - (streak - 1) * 0.05)
 }
 
-const CARD_WIDTH = 1.4 * 1.5 * SCALE
-const CARD_HEIGHT = 1.4 * 1.5 * SCALE
-
 let hoverTiltTargetX = 0
 let hoverTiltTargetY = 0
 let hoverTiltCurrentX = 0
@@ -820,6 +845,7 @@ function updateSlideHoverFromPointer(clientX, clientY) {
 }
 
 function stepAndApplyFrontSlideHoverTilt(delta) {
+  if (stackDragActive) return
   if (!FRONT_SLIDE_HOVER_TILT_ENABLED || cards.length === 0) return
   const k = 1 - Math.exp(-FRONT_SLIDE_HOVER_TILT_SMOOTH * delta)
   const front = cards[currentIndex]
@@ -835,6 +861,7 @@ function stepAndApplyFrontSlideHoverTilt(delta) {
 }
 
 function stepAndApplyDeepSlideHover(delta) {
+  if (stackDragActive) return
   if (!DEEP_SLIDE_HOVER_ENABLED || cards.length === 0) return
   const k = 1 - Math.exp(-DEEP_SLIDE_HOVER_SMOOTH * delta)
   const allowDeep =
@@ -877,6 +904,7 @@ function stepAndApplyDeepSlideHover(delta) {
 }
 
 function stepAndApplyFrontSlideHoverPop(delta) {
+  if (stackDragActive) return
   if (!FRONT_SLIDE_HOVER_POP_ENABLED || cards.length === 0) return
   const k = 1 - Math.exp(-FRONT_SLIDE_HOVER_POP_SMOOTH * delta)
   const front = cards[currentIndex]
@@ -918,13 +946,13 @@ function stepAndApplyFrontSlideHoverPop(delta) {
 }
 
 /** Set false to use MeshBasicMaterial for art — no blur shader, no per-frame blur uniform updates (lightest path). */
-const SLIDE_STACK_BLUR_ENABLED = false
+const SLIDE_STACK_BLUR_ENABLED = true
 
 /**
  * When true, only the front slide is full color; deeper slides are grayscale.
  * Saturation eases smoothly between 1st and 2nd stack positions (uses gltfSlideIndex during transitions).
  */
-const SLIDE_FRONT_COLOR_ONLY = false
+const SLIDE_FRONT_COLOR_ONLY = true
 
 /** True when slide art needs a custom shader (blur and/or stack desaturation). */
 const SLIDE_USE_ART_SHADER = SLIDE_STACK_BLUR_ENABLED || SLIDE_FRONT_COLOR_ONLY
@@ -1095,7 +1123,7 @@ function makeLabelTexture(parentIndex, index) {
 function createCardsForGroup(group, parentIndexForLabels) {
   const n = group.length
   const positions = getSlotPositions(n)
-  const borderThickness = 0.01 * 1.5 * SCALE
+  const borderThickness = 0.01 * 1.5 * stackLayout.scale
   const innerWidth = CARD_WIDTH - 2 * borderThickness
   const innerHeight = CARD_HEIGHT - 2 * borderThickness
   const borderGeometry = new THREE.PlaneGeometry(CARD_WIDTH, CARD_HEIGHT)
@@ -1331,6 +1359,7 @@ function animateToTarget(duration, ease = EASE) {
   const vanish = getVanishPosition()
 
   if (activeTimeline) activeTimeline.kill()
+  killStackSnapTween()
   const fromIndex = currentIndex
   const toIndex = targetIndex
   const gltfIndexObj = { value: gltfSlideIndex }
@@ -1411,6 +1440,147 @@ function animateToTarget(duration, ease = EASE) {
       activeTimeline.to(cards[i].position, { x: slot.x, y: slot.y ?? 0, z: slot.z, duration, ease }, '<')
     }
   }
+}
+
+// --- Mobile stack scrub: drag vertically through fractional slide index, snap on release ---
+const _stackLerpPosA = []
+const _stackLerpPosB = []
+const _stackLerpOpA = []
+const _stackLerpOpB = []
+
+function ensureStackLerpBuffers(n) {
+  while (_stackLerpPosA.length < n) {
+    _stackLerpPosA.push(new THREE.Vector3())
+    _stackLerpPosB.push(new THREE.Vector3())
+  }
+  while (_stackLerpOpA.length < n) {
+    _stackLerpOpA.push(0)
+    _stackLerpOpB.push(0)
+  }
+}
+
+function fillDiscreteStackLayout(frontIdx, n, vanish, outPos, outOp) {
+  for (let i = 0; i < n; i++) {
+    if (i < frontIdx) {
+      outPos[i].set(vanish.x, vanish.y ?? 0, vanish.z)
+      outOp[i] = 0
+    } else {
+      const slot = slotPositions[i - frontIdx]
+      outPos[i].set(slot.x, slot.y ?? 0, slot.z)
+      outOp[i] = 1
+    }
+  }
+}
+
+/** @type {ReturnType<typeof gsap.to> | null} */
+let stackSnapTween = null
+let stackDragActive = false
+let stackDragCandidate = false
+let stackDragPtrDownX = 0
+let stackDragPtrDownY = 0
+let stackDragBaselineFloat = 0
+let stackDragAnchorY = 0
+/** Raw linear index from finger (before magnetic remap). */
+let stackDragLastRawF = null
+/** Drag direction for asymmetric magnetic curve. */
+let stackDragForwardHint = true
+/** Smoothed displayed index (lerps toward magnetic target each move). */
+let stackDragDisplayF = 0
+
+/**
+ * Resistance in the first `commit` of fractional travel, then ease toward the next integer.
+ * Mirrored when dragging backward.
+ */
+function magneticInterSlideU(u, forward, commit, stickPow, pullPow) {
+  const c = THREE.MathUtils.clamp(commit, 0.04, 0.48)
+  u = THREE.MathUtils.clamp(u, 0, 1)
+  if (forward) {
+    if (u <= c) return c * Math.pow(u / c, stickPow)
+    const t = (u - c) / (1 - c)
+    return c + (1 - c) * Math.pow(t, pullPow)
+  }
+  const v = 1 - u
+  return 1 - magneticInterSlideU(v, true, c, stickPow, pullPow)
+}
+
+function applyMagneticToRawSlideIndex(rawF) {
+  const n = numSlides()
+  const maxF = Math.max(0, n - 1)
+  let rf = THREE.MathUtils.clamp(rawF, 0, maxF)
+  const commit = layoutProfile.slideStackMagneticCommit
+
+  if (stackDragLastRawF != null) {
+    const delta = rf - stackDragLastRawF
+    if (Math.abs(delta) > 1e-5) stackDragForwardHint = delta > 0
+  }
+  stackDragLastRawF = rf
+
+  if (commit == null || commit <= 0 || n <= 1) return rf
+
+  const stickPow = layoutProfile.slideStackMagneticStickPower ?? 2.2
+  const pullPow = layoutProfile.slideStackMagneticPullPower ?? 2.35
+  const k = Math.floor(rf)
+  const u = rf - k
+  if (k >= n - 1) return rf
+
+  return k + magneticInterSlideU(u, stackDragForwardHint, commit, stickPow, pullPow)
+}
+
+function killStackSnapTween() {
+  if (stackSnapTween) {
+    stackSnapTween.kill()
+    stackSnapTween = null
+  }
+}
+
+function isStackScrubInteracting() {
+  return stackDragActive || stackSnapTween != null
+}
+
+function applySlideStackAtFloatIndex(f) {
+  const n = numSlides()
+  if (n === 0 || cards.length < n) return
+  f = THREE.MathUtils.clamp(f, 0, n - 1)
+  const vanish = getVanishPosition()
+  ensureStackLerpBuffers(n)
+  const k0 = Math.floor(f)
+  const k1 = Math.min(n - 1, k0 + 1)
+  const t = f - k0
+  fillDiscreteStackLayout(k0, n, vanish, _stackLerpPosA, _stackLerpOpA)
+  fillDiscreteStackLayout(k1, n, vanish, _stackLerpPosB, _stackLerpOpB)
+  for (let i = 0; i < n; i++) {
+    cards[i].position.lerpVectors(_stackLerpPosA[i], _stackLerpPosB[i], t)
+    setCardOpacity(cards[i], THREE.MathUtils.lerp(_stackLerpOpA[i], _stackLerpOpB[i], t))
+  }
+  gltfSlideIndex = f
+  const r = Math.round(f)
+  currentIndex = r
+  targetIndex = r
+}
+
+function snapStackDragToNearestSlide() {
+  const n = numSlides()
+  if (n === 0) return
+  killStackSnapTween()
+  const snapped = THREE.MathUtils.clamp(Math.round(gltfSlideIndex), 0, n - 1)
+  const dur = layoutProfile.slideStackSnapDuration ?? 0.15
+  if (dur <= 0.01 || Math.abs(snapped - gltfSlideIndex) < 1e-5) {
+    applySlideStackAtFloatIndex(snapped)
+    return
+  }
+  const o = { f: gltfSlideIndex }
+  stackSnapTween = gsap.to(o, {
+    f: snapped,
+    duration: dur,
+    ease: layoutProfile.slideStackSnapEase ?? 'expo.out',
+    onUpdate: () => {
+      applySlideStackAtFloatIndex(o.f)
+    },
+    onComplete: () => {
+      applySlideStackAtFloatIndex(snapped)
+      stackSnapTween = null
+    },
+  })
 }
 
 const COLLAPSE_OFFSET_Z = 0.02
@@ -1865,6 +2035,11 @@ const raycaster = new THREE.Raycaster()
 const mouse = new THREE.Vector2()
 const CLICK_NAVIGATE_DURATION = 0.5
 
+/** Primary pointer that started on the canvas (touch idle reset). */
+let activeCanvasPointerId = null
+let swipePointerId = null
+let suppressNextCanvasClick = false
+
 window.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') {
     e.preventDefault()
@@ -1886,32 +2061,42 @@ let wheelAccum = 0
 let wheelCooldownUntil = 0
 const WHEEL_THRESHOLD = 7
 const WHEEL_COOLDOWN_MS = 10
-window.addEventListener('wheel', (e) => {
-  if (Date.now() < wheelCooldownUntil) {
-    e.preventDefault()
-    wheelAccum = 0
-    return
-  }
-  wheelAccum -= e.deltaY
-  if (wheelAccum >= WHEEL_THRESHOLD) {
-    wheelAccum = 0
-    wheelCooldownUntil = Date.now() + WHEEL_COOLDOWN_MS
-    e.preventDefault()
-    navigateRight()
-  } else if (wheelAccum <= -WHEEL_THRESHOLD) {
-    wheelAccum = 0
-    wheelCooldownUntil = Date.now() + WHEEL_COOLDOWN_MS
-    e.preventDefault()
-    navigateLeft()
-  }
-}, { passive: false })
+if (layoutProfile.useWheelNav) {
+  window.addEventListener('wheel', (e) => {
+    if (Date.now() < wheelCooldownUntil) {
+      e.preventDefault()
+      wheelAccum = 0
+      return
+    }
+    wheelAccum -= e.deltaY
+    if (wheelAccum >= WHEEL_THRESHOLD) {
+      wheelAccum = 0
+      wheelCooldownUntil = Date.now() + WHEEL_COOLDOWN_MS
+      e.preventDefault()
+      navigateRight()
+    } else if (wheelAccum <= -WHEEL_THRESHOLD) {
+      wheelAccum = 0
+      wheelCooldownUntil = Date.now() + WHEEL_COOLDOWN_MS
+      e.preventDefault()
+      navigateLeft()
+    }
+  }, { passive: false })
+}
 
-function onCanvasClick(e) {
-  if (isTransitioning) return
+/** Max movement (px) to count as a tap vs swipe; pointerup uses this so touch picks match click. */
+const CANVAS_TAP_SLOP_PX = 16
+
+/**
+ * Raycast pick: same behaviour as a canvas click (enter child / link / jump to slide).
+ * @param {number} clientX
+ * @param {number} clientY
+ */
+function performCanvasSlidePick(clientX, clientY) {
+  if (isTransitioning || isStackScrubInteracting()) return
   const el = renderer.domElement
   const rect = el.getBoundingClientRect()
-  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
-  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+  mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1
+  mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1
   raycaster.setFromCamera(mouse, camera)
   const hits = raycaster.intersectObjects(cardMeshes)
   if (hits.length === 0) return
@@ -1936,6 +2121,14 @@ function onCanvasClick(e) {
   if (logoSlideNavDir !== 0) logoLastSpinDir = logoSlideNavDir
   animateToTarget(CLICK_NAVIGATE_DURATION)
 }
+
+function onCanvasClick(e) {
+  if (suppressNextCanvasClick) {
+    suppressNextCanvasClick = false
+    return
+  }
+  performCanvasSlidePick(e.clientX, e.clientY)
+}
 renderer.domElement.addEventListener('click', onCanvasClick)
 
 renderer.domElement.addEventListener('pointerenter', () => {
@@ -1950,21 +2143,150 @@ renderer.domElement.addEventListener('pointerleave', () => {
 })
 renderer.domElement.addEventListener('pointermove', (e) => {
   pointerIsOverCanvas = true
+  if (!layoutProfile.useSwipeNav || isTransitioning || cards.length === 0) {
+    updateSlideHoverFromPointer(e.clientX, e.clientY)
+    return
+  }
+  if (stackDragActive) {
+    const px = layoutProfile.slideStackDragPxPerSlide ?? 52
+    const n = numSlides()
+    const rawF = THREE.MathUtils.clamp(
+      stackDragBaselineFloat + (stackDragAnchorY - e.clientY) / px,
+      0,
+      Math.max(0, n - 1)
+    )
+    const fMag = applyMagneticToRawSlideIndex(rawF)
+    const follow = layoutProfile.slideStackMagneticFollow ?? 1
+    stackDragDisplayF = THREE.MathUtils.lerp(stackDragDisplayF, fMag, Math.min(1, follow))
+    applySlideStackAtFloatIndex(stackDragDisplayF)
+    return
+  }
+  if (stackDragCandidate) {
+    const tdx = e.clientX - stackDragPtrDownX
+    const tdy = e.clientY - stackDragPtrDownY
+    const arm = layoutProfile.slideStackDragArmPx ?? 12
+    const ratio = layoutProfile.swipeDominanceRatio ?? 1.2
+    if (Math.abs(tdy) >= arm && Math.abs(tdy) >= Math.abs(tdx) * ratio) {
+      if (activeTimeline) activeTimeline.kill()
+      killStackSnapTween()
+      stackDragActive = true
+      stackDragCandidate = false
+      pointerIsOverCanvas = false
+      hoverTiltTargetX = 0
+      hoverTiltTargetY = 0
+      hoverTiltCurrentX = 0
+      hoverTiltCurrentY = 0
+      hoverDeepIndex = -1
+      hoverFrontPop = false
+      for (const c of cards) {
+        c.userData._hoverLiftApplied = 0
+        c.userData._hoverXApplied = 0
+        c.userData._hoverYApplied = 0
+        c.scale.setScalar(1)
+      }
+      stackDragBaselineFloat = gltfSlideIndex
+      stackDragAnchorY = e.clientY
+      stackDragLastRawF = gltfSlideIndex
+      stackDragForwardHint = true
+      stackDragDisplayF = gltfSlideIndex
+      const px = layoutProfile.slideStackDragPxPerSlide ?? 52
+      const n = numSlides()
+      const rawF = THREE.MathUtils.clamp(
+        stackDragBaselineFloat + (stackDragAnchorY - e.clientY) / px,
+        0,
+        Math.max(0, n - 1)
+      )
+      const fMag = applyMagneticToRawSlideIndex(rawF)
+      const follow = layoutProfile.slideStackMagneticFollow ?? 1
+      stackDragDisplayF = THREE.MathUtils.lerp(stackDragDisplayF, fMag, Math.min(1, follow))
+      applySlideStackAtFloatIndex(stackDragDisplayF)
+    } else {
+      updateSlideHoverFromPointer(e.clientX, e.clientY)
+    }
+    return
+  }
   updateSlideHoverFromPointer(e.clientX, e.clientY)
 })
 
-window.addEventListener('pointermove', (e) => {
-  setCameraParallaxFromClient(e.clientX, e.clientY)
-}, { passive: true })
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (layoutProfile.clearHoverOnPointerEnd) activeCanvasPointerId = e.pointerId
+  if (layoutProfile.useSwipeNav && e.isPrimary) {
+    swipePointerId = e.pointerId
+    stackDragPtrDownX = e.clientX
+    stackDragPtrDownY = e.clientY
+    stackDragActive = false
+    stackDragCandidate = true
+    stackDragLastRawF = null
+    killStackSnapTween()
+  }
+})
+
+window.addEventListener(
+  'pointerup',
+  (e) => {
+    if (layoutProfile.useSwipeNav && e.pointerId === swipePointerId) {
+      const dx = e.clientX - stackDragPtrDownX
+      const dy = e.clientY - stackDragPtrDownY
+      swipePointerId = null
+      if (stackDragActive) {
+        stackDragActive = false
+        stackDragCandidate = false
+        snapStackDragToNearestSlide()
+        suppressNextCanvasClick = true
+      } else {
+        stackDragCandidate = false
+        if (Math.hypot(dx, dy) <= CANVAS_TAP_SLOP_PX) {
+          suppressNextCanvasClick = true
+          performCanvasSlidePick(e.clientX, e.clientY)
+        }
+      }
+    }
+
+    if (layoutProfile.clearHoverOnPointerEnd && e.pointerId === activeCanvasPointerId) {
+      pointerIsOverCanvas = false
+      hoverTiltTargetX = 0
+      hoverTiltTargetY = 0
+      hoverDeepIndex = -1
+      hoverFrontPop = false
+      activeCanvasPointerId = null
+    }
+  },
+  true
+)
+
+window.addEventListener('pointercancel', (e) => {
+  if (layoutProfile.useSwipeNav && e.pointerId === swipePointerId) {
+    const wasStackDrag = stackDragActive
+    swipePointerId = null
+    stackDragCandidate = false
+    if (wasStackDrag) {
+      stackDragActive = false
+      snapStackDragToNearestSlide()
+      suppressNextCanvasClick = true
+    }
+  }
+  if (layoutProfile.clearHoverOnPointerEnd && e.pointerId === activeCanvasPointerId) {
+    pointerIsOverCanvas = false
+    hoverTiltTargetX = 0
+    hoverTiltTargetY = 0
+    hoverDeepIndex = -1
+    hoverFrontPop = false
+    activeCanvasPointerId = null
+  }
+}, true)
+
+if (layoutProfile.useWindowParallax) {
+  window.addEventListener('pointermove', (e) => {
+    setCameraParallaxFromClient(e.clientX, e.clientY)
+  }, { passive: true })
+}
 document.documentElement.addEventListener('mouseleave', () => {
   cameraParallaxTargetNdcX = 0
   cameraParallaxTargetNdcY = 0
 })
 
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight
-  camera.updateProjectionMatrix()
-  renderer.setSize(window.innerWidth, window.innerHeight)
+  syncRendererToWindow()
 })
 
 function stepBackgroundVideoPlayback() {
@@ -2078,7 +2400,7 @@ function animate() {
   stepAndApplyDeepSlideHover(delta)
   stepAndApplyFrontSlideHoverPop(delta)
   const context = { numSlides: total, gltfSlideIndex, camera, pathIndices, logoSpinAngle }
-  SCENE_OBJECT_CONFIGS.forEach((objConfig) => {
+  sceneObjectConfigs.forEach((objConfig) => {
     if (objConfig.model) applySceneObjectBehaviour(objConfig.model, objConfig, context)
   })
   renderer.render(scene, camera)

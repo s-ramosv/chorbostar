@@ -21,10 +21,10 @@ export function publicAsset(pathFromPublic) {
   return `${base}${p}`
 }
 
-const topOffset = 'max(68px, env(safe-area-inset-top))'; 
+const topOffset = 'max(68px, env(safe-area-inset-top))'
 
-export const TEXT_OVERLAYS = [
-
+/** Wide-viewport layout with pixel-anchored insets (header graphic alignment). */
+export const TEXT_OVERLAYS_DESKTOP = [
   {
     text: 'linkedin',
     fontSize: '20px',
@@ -33,7 +33,7 @@ export const TEXT_OVERLAYS = [
     top: topOffset,
     fontWeight: 500,
     tracking: '-0.04em',
-    href: 'https://example.com',
+    href: 'https://www.linkedin.com/in/samu-rv/',
   },
   {
     text: 'cv',
@@ -56,6 +56,37 @@ export const TEXT_OVERLAYS = [
   },
 ]
 
+/** Touch / narrow: dock-only row (see `style.css` for mobile column). */
+export const TEXT_OVERLAYS_MOBILE = [
+  {
+    text: 'samuel ramos varela',
+    dock: 'top-right',
+    fontSize: '18px',
+    fontWeight: 500,
+    tracking: '-0.04em',
+  },
+  {
+    text: 'linkedin',
+    dock: 'top-right',
+    fontSize: '18px',
+    fontWeight: 500,
+    tracking: '-0.04em',
+    href: 'https://www.linkedin.com/in/samu-rv/',
+  },
+  {
+    text: 'cv',
+    dock: 'top-right',
+    fontSize: '18px',
+    fontWeight: 500,
+    tracking: '-0.04em',
+    href: publicAsset('download/SamuelRV-CV-240326.pdf'),
+    download: 'Samuel-Ramos-Varela-CV.pdf',
+  },
+]
+
+/** @deprecated Use TEXT_OVERLAYS_DESKTOP or pass `overlays` to mountTextOverlays */
+export const TEXT_OVERLAYS = TEXT_OVERLAYS_DESKTOP
+
 /** Matches `public/assets/fonts/apple-font.ttf` (SF Pro variable). */
 const FONT_FAMILY = 'SF Pro'
 
@@ -77,12 +108,12 @@ function ensureTextOverlayFont() {
 
 /**
  * @param {HTMLElement} appRoot — `#app`
- * @param {{ viewportTextPx?: number }} [options] — if set, default `font-size` is applied as px with `!important` (Safari-stable).
+ * @param {{ viewportTextPx?: number, overlays?: typeof TEXT_OVERLAYS_DESKTOP }} [options] — `overlays` defaults to desktop list.
  */
 export function mountTextOverlays(appRoot, options = {}) {
-  const { viewportTextPx } = options
+  const { viewportTextPx, overlays = TEXT_OVERLAYS_DESKTOP } = options
   ensureTextOverlayFont()
-  if (TEXT_OVERLAYS.length === 0) return
+  if (!overlays || overlays.length === 0) return
 
   const root = document.createElement('div')
   root.id = 'text-overlays'
@@ -91,7 +122,7 @@ export function mountTextOverlays(appRoot, options = {}) {
   /** @type {HTMLDivElement | null} */
   let topRightDock = null
 
-  for (const item of TEXT_OVERLAYS) {
+  for (const item of overlays) {
     const tag = item.href ? 'a' : 'span'
     const el = document.createElement(tag)
     el.className = item.href ? 'text-overlay text-overlay--link' : 'text-overlay text-overlay--static'
