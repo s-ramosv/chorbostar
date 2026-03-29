@@ -2,13 +2,14 @@
  * Screen-space text: **viewport-fixed** (`position: fixed`), independent of the Three.js camera/resolution.
  *
  * **Position**
- * - `dock: 'top-right'` — row along the top, flush right (safe-area aware). Gaps/padding are **fixed px**
- *   via `style.css` (`--ui-dock-*`). Ignored for that item if you set any of **`left` / `top` / `right` / `bottom`**
- *   (those use absolute positioning vs the viewport instead).
- * - Or omit `dock` and set `left` / `top` / `right` / `bottom` in **px** (or any CSS) vs the viewport.
+ * - **`top` / `right` / `left` / `bottom`** — any CSS length, inset from the **viewport** (via `.text-overlays-root`).
+ *   `top` = distance from top border; `right` = distance from right border (same as normal CSS `position: fixed` insets).
+ *   Use `max(12px, env(safe-area-inset-*))` on phones with notches. Set **both** `top` and `right` (or other pairs) so layout is unambiguous.
+ * - `dock: 'top-right'` — flex row in the dock; only used if you do **not** set any of `left`/`top`/`right`/`bottom`.
+ *   Spacing from `style.css` (`--ui-dock-*`) and `layoutProfile.textUi`.
  *
- * **Fixed size:** default text size is **`VIEWPORT_UI_TEXT_PX` in `main.js`** (`--ui-fixed-text-px` on `#app`).
- * Optional per-item **`fontSize`** (number = px or CSS string) overrides. Header width uses the same pattern.
+ * **Fixed size:** default text size is **`--ui-fixed-text-px` on `#app`** from `main.js` (desktop: `VIEWPORT_UI_TEXT_PX`; mobile: `layoutProfile.textUi.fontSize` for viewport-relative `clamp` / `vmin`).
+ * Optional per-item **`fontSize`** overrides the variable for that item only.
  *
  * Other fields: `text`, `fontSize`, `tracking`, `transform`, `color`, `href`, `download`, `id`, `maxWidth`,
  * `fontWeight` — same as before.
@@ -56,27 +57,33 @@ export const TEXT_OVERLAYS_DESKTOP = [
   },
 ]
 
-/** Touch / narrow: dock-only row (see `style.css` for mobile column). */
+/**
+ * Mobile: each line is positioned independently — edit **`top`** and **`right`** per item (CSS strings).
+ * Smaller `right` = closer to the right edge; larger `right` = further left. Share one `MOBILE_TEXT_TOP` or set `top` per item.
+ * Font size still comes from `layoutProfile.textUi.fontSize` unless you add `fontSize` here.
+ */
+const MOBILE_TEXT_TOP = 'calc(env(safe-area-inset-top) + clamp(60px, 12vmin, 70px))'
+
 export const TEXT_OVERLAYS_MOBILE = [
   {
     text: 'samuel ramos varela',
-    dock: 'top-right',
-    fontSize: '18px',
+    top: MOBILE_TEXT_TOP,
+    right: 'max(10px, env(safe-area-inset-right))',
     fontWeight: 500,
     tracking: '-0.04em',
   },
   {
     text: 'linkedin',
-    dock: 'top-right',
-    fontSize: '18px',
+    top: MOBILE_TEXT_TOP,
+    left: 'calc(clamp(10px, 15vmin, 98px))',
     fontWeight: 500,
     tracking: '-0.04em',
     href: 'https://www.linkedin.com/in/samu-rv/',
   },
   {
     text: 'cv',
-    dock: 'top-right',
-    fontSize: '18px',
+    top: MOBILE_TEXT_TOP,
+    right: 'max(240px, env(safe-area-inset-right))',
     fontWeight: 500,
     tracking: '-0.04em',
     href: publicAsset('download/SamuelRV-CV-240326.pdf'),

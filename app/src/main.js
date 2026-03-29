@@ -134,9 +134,41 @@ const HEADER_WEB_IMAGE_OFFSET_Y_PX = 25
  */
 const VIEWPORT_UI_TEXT_PX = isSafari ? 18 : 16
 
-container.style.setProperty('--ui-fixed-text-px', `${VIEWPORT_UI_TEXT_PX}px`)
-container.style.setProperty('--ui-header-max-width-px', `${HEADER_WEB_IMAGE_MAX_WIDTH_PX}px`)
-container.style.setProperty('--ui-header-offset-y', `${HEADER_WEB_IMAGE_OFFSET_Y_PX}px`)
+const tu = layoutProfile.textUi
+if (tu) {
+  container.style.setProperty(
+    '--ui-fixed-text-px',
+    tu.fontSize ?? `${VIEWPORT_UI_TEXT_PX}px`
+  )
+  if (tu.dockGap != null) container.style.setProperty('--ui-dock-gap-px', tu.dockGap)
+  if (tu.dockPadX != null) container.style.setProperty('--ui-dock-pad-x', tu.dockPadX)
+  if (tu.dockPadY != null) container.style.setProperty('--ui-dock-pad-y', tu.dockPadY)
+  if (tu.dockTop != null) container.style.setProperty('--ui-dock-top', tu.dockTop)
+} else {
+  container.style.setProperty('--ui-fixed-text-px', `${VIEWPORT_UI_TEXT_PX}px`)
+}
+
+const hb = layoutProfile.headerBanner
+if (hb) {
+  container.style.setProperty('--ui-header-max-width', hb.maxWidth)
+  container.style.setProperty('--ui-header-offset-y', hb.offsetY)
+  if (hb.objectPosition != null) {
+    container.style.setProperty('--ui-header-object-position', hb.objectPosition)
+  }
+  if (hb.right != null) container.style.setProperty('--ui-header-right', hb.right)
+  if (hb.left != null) container.style.setProperty('--ui-header-left', hb.left)
+  if (hb.transform != null) container.style.setProperty('--ui-header-transform', hb.transform)
+  if (hb.maxHeight != null) {
+    container.style.setProperty('--ui-header-max-height', hb.maxHeight)
+  }
+} else {
+  container.style.setProperty('--ui-header-max-width', `${HEADER_WEB_IMAGE_MAX_WIDTH_PX}px`)
+  container.style.setProperty('--ui-header-offset-y', `${HEADER_WEB_IMAGE_OFFSET_Y_PX}px`)
+  container.style.setProperty('--ui-header-object-position', 'top right')
+  container.style.setProperty('--ui-header-right', 'max(0px, env(safe-area-inset-right))')
+  container.style.setProperty('--ui-header-left', 'auto')
+  container.style.setProperty('--ui-header-transform', 'none')
+}
 
 mountTextOverlays(container, {
   viewportTextPx: VIEWPORT_UI_TEXT_PX,
@@ -605,9 +637,16 @@ function getSlotPositions(n) {
 
 let slotPositions = getSlotPositions(currentGroup().length)
 
-const VANISH_Z = 2
 function getVanishPosition() {
-  return { x: slotPositions[0].x, y: slotPositions[0].y, z: VANISH_Z }
+  const s0 = slotPositions[0]
+  if (!s0) return { x: 0, y: 0, z: stackLayout.vanishZ ?? 2 }
+  const ox = stackLayout.vanishOffsetX ?? 0
+  const oy = stackLayout.vanishOffsetY ?? 0
+  return {
+    x: s0.x + ox,
+    y: (s0.y ?? 0) + oy,
+    z: stackLayout.vanishZ ?? 2,
+  }
 }
 
 // Transition speeds (enter subgroup / go back to parent)
@@ -621,25 +660,19 @@ const PRESS_SHRINK_DURATION = 0.08
 const PRESS_RESTORE_DURATION = 0.16
 const PRESS_SCALE = 0.75
 
-/**
- * Extra world Y rotation (rad) on the visible front stack slide; the next slide stays at 0 relative to this.
- * Positive ≈ front card’s right edge swings toward the camera in the default layout (negate to flip).
- * `gltfSlideIndex` blends between slides during navigation so the handoff stays smooth.
- */
-const FRONT_SLIDE_STACK_YAW_RAD = Math.PI / 16
-/** Slide-index span over which the old front eases stack yaw to 0 as it moves past the front. */
-const FRONT_SLIDE_STACK_YAW_EXIT_BLEND = 0.8
-
-/**
- * World Y rotation (rad) when a slide is fully “off” the front (past the float front index while leaving).
- * Blends smoothly from stack yaw (front tilt) ↔ this value using `gltfSlideIndex`, so going forward and backward match.
- */
-const SLIDE_OFF_FRAME_YAW_RAD = Math.PI / 4
-/**
- * How wide the rotation blend is in slide-index space (same units as `gltfSlideIndex` tween).
- * Larger = longer ease between front stack pose and off-frame pose.
- */
-const SLIDE_OFF_FRAME_ROTATION_BLEND = 1
+/** Defaults match previous globals; override via `stackLayout` from `layoutProfile.stack`. */
+function getFrontSlideStackYawRad() {
+  return stackLayout.frontSlideStackYawRad ?? Math.PI / 16
+}
+function getFrontSlideStackYawExitBlend() {
+  return stackLayout.frontSlideStackYawExitBlend ?? 0.8
+}
+function getSlideOffFrameYawRad() {
+  return stackLayout.slideOffFrameYawRad ?? Math.PI / 4
+}
+function getSlideOffFrameRotationBlend() {
+  return stackLayout.slideOffFrameRotationBlend ?? 1
+}
 
 /** Pointer-driven tilt on the front slide only (adds on top of stack / off-frame yaw). */
 const FRONT_SLIDE_HOVER_TILT_ENABLED = true
@@ -690,22 +723,22 @@ function setCardPageTurnState(card, axis, angle, restX) {
 }
 
 function getSlideStackYawRad(slideIndex, frontFloat) {
-  const maxYaw = FRONT_SLIDE_STACK_YAW_RAD
+  const maxYaw = getFrontSlideStackYawRad()
   if (maxYaw === 0) return 0
   const d = slideIndex - frontFloat
   if (d >= 1) return 0
   if (d >= 0) {
     return maxYaw * (1 - THREE.MathUtils.smoothstep(d, 0, 1))
   }
-  const b = Math.max(1e-4, FRONT_SLIDE_STACK_YAW_EXIT_BLEND)
+  const b = Math.max(1e-4, getFrontSlideStackYawExitBlend())
   if (d <= -b) return 0
   return maxYaw * THREE.MathUtils.smoothstep(d, -b, 0)
 }
 
-/** 0 = use stack yaw only; 1 = use SLIDE_OFF_FRAME_YAW_RAD (slide has moved past the float front). */
+/** 0 = use stack yaw only; 1 = use slide-off-frame yaw (slide has moved past the float front). */
 function getOffFrameYawBlend(slideIndex, frontFloat) {
-  if (SLIDE_OFF_FRAME_YAW_RAD === 0) return 0
-  const w = Math.max(1e-4, SLIDE_OFF_FRAME_ROTATION_BLEND)
+  if (getSlideOffFrameYawRad() === 0) return 0
+  const w = Math.max(1e-4, getSlideOffFrameRotationBlend())
   const delta = slideIndex - frontFloat
   if (delta >= 0) return 0
   if (delta <= -w) return 1
@@ -715,15 +748,15 @@ function getOffFrameYawBlend(slideIndex, frontFloat) {
 function getCombinedStackVisualYawRad(slideIndex, frontFloat) {
   const stackYaw = getSlideStackYawRad(slideIndex, frontFloat)
   const offBlend = getOffFrameYawBlend(slideIndex, frontFloat)
-  return THREE.MathUtils.lerp(stackYaw, SLIDE_OFF_FRAME_YAW_RAD, offBlend)
+  return THREE.MathUtils.lerp(stackYaw, getSlideOffFrameYawRad(), offBlend)
 }
 
 let _frontStackYawSmoothed = 0
 let _frontStackYawSmoothedForIndex = -1
 
 function syncSlideStackRotations(delta) {
-  const noStackTilt = FRONT_SLIDE_STACK_YAW_RAD === 0
-  const noOffFrame = SLIDE_OFF_FRAME_YAW_RAD === 0
+  const noStackTilt = getFrontSlideStackYawRad() === 0
+  const noOffFrame = getSlideOffFrameYawRad() === 0
   if (noStackTilt && noOffFrame && cards.every((c) => (c.userData.pageTurnY ?? 0) === 0)) {
     for (let i = 0; i < cards.length; i++) {
       const c = cards[i]
@@ -1480,12 +1513,38 @@ let stackDragPtrDownX = 0
 let stackDragPtrDownY = 0
 let stackDragBaselineFloat = 0
 let stackDragAnchorY = 0
+let stackDragAnchorX = 0
+/** Last clientX for per-move logo spin during horizontal scrub. */
+let stackDragLastClientXForLogo = 0
 /** Raw linear index from finger (before magnetic remap). */
 let stackDragLastRawF = null
 /** Drag direction for asymmetric magnetic curve. */
 let stackDragForwardHint = true
 /** Smoothed displayed index (lerps toward magnetic target each move). */
 let stackDragDisplayF = 0
+
+function stackScrubUsesHorizontalAxis() {
+  return layoutProfile.slideStackDragAxis === 'horizontal'
+}
+
+function stackScrubRawF(clientX, clientY, baseline, px) {
+  const n = numSlides()
+  const hi = Math.max(0, n - 1)
+  if (stackScrubUsesHorizontalAxis()) {
+    return THREE.MathUtils.clamp(baseline + (clientX - stackDragAnchorX) / px, 0, hi)
+  }
+  return THREE.MathUtils.clamp(baseline + (stackDragAnchorY - clientY) / px, 0, hi)
+}
+
+function applyHorizontalScrubLogoSpin(clientX) {
+  const radPerPx = layoutProfile.slideStackLogoSpinPerPx
+  if (!stackScrubUsesHorizontalAxis() || radPerPx == null || radPerPx === 0) return
+  const dlx = clientX - stackDragLastClientXForLogo
+  stackDragLastClientXForLogo = clientX
+  if (Math.abs(dlx) < 1e-4) return
+  // Direct angle so scrub rotation isn’t cancelled by the logo ω lerp toward nav idle.
+  logoSpinAngle += dlx * radPerPx
+}
 
 /**
  * Resistance in the first `commit` of fractional travel, then ease toward the next integer.
@@ -2149,16 +2208,12 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   }
   if (stackDragActive) {
     const px = layoutProfile.slideStackDragPxPerSlide ?? 52
-    const n = numSlides()
-    const rawF = THREE.MathUtils.clamp(
-      stackDragBaselineFloat + (stackDragAnchorY - e.clientY) / px,
-      0,
-      Math.max(0, n - 1)
-    )
+    const rawF = stackScrubRawF(e.clientX, e.clientY, stackDragBaselineFloat, px)
     const fMag = applyMagneticToRawSlideIndex(rawF)
     const follow = layoutProfile.slideStackMagneticFollow ?? 1
     stackDragDisplayF = THREE.MathUtils.lerp(stackDragDisplayF, fMag, Math.min(1, follow))
     applySlideStackAtFloatIndex(stackDragDisplayF)
+    applyHorizontalScrubLogoSpin(e.clientX)
     return
   }
   if (stackDragCandidate) {
@@ -2166,7 +2221,10 @@ renderer.domElement.addEventListener('pointermove', (e) => {
     const tdy = e.clientY - stackDragPtrDownY
     const arm = layoutProfile.slideStackDragArmPx ?? 12
     const ratio = layoutProfile.swipeDominanceRatio ?? 1.2
-    if (Math.abs(tdy) >= arm && Math.abs(tdy) >= Math.abs(tdx) * ratio) {
+    const armed = stackScrubUsesHorizontalAxis()
+      ? Math.abs(tdx) >= arm && Math.abs(tdx) >= Math.abs(tdy) * ratio
+      : Math.abs(tdy) >= arm && Math.abs(tdy) >= Math.abs(tdx) * ratio
+    if (armed) {
       if (activeTimeline) activeTimeline.kill()
       killStackSnapTween()
       stackDragActive = true
@@ -2186,16 +2244,13 @@ renderer.domElement.addEventListener('pointermove', (e) => {
       }
       stackDragBaselineFloat = gltfSlideIndex
       stackDragAnchorY = e.clientY
+      stackDragAnchorX = e.clientX
+      stackDragLastClientXForLogo = e.clientX
       stackDragLastRawF = gltfSlideIndex
       stackDragForwardHint = true
       stackDragDisplayF = gltfSlideIndex
       const px = layoutProfile.slideStackDragPxPerSlide ?? 52
-      const n = numSlides()
-      const rawF = THREE.MathUtils.clamp(
-        stackDragBaselineFloat + (stackDragAnchorY - e.clientY) / px,
-        0,
-        Math.max(0, n - 1)
-      )
+      const rawF = stackScrubRawF(e.clientX, e.clientY, stackDragBaselineFloat, px)
       const fMag = applyMagneticToRawSlideIndex(rawF)
       const follow = layoutProfile.slideStackMagneticFollow ?? 1
       stackDragDisplayF = THREE.MathUtils.lerp(stackDragDisplayF, fMag, Math.min(1, follow))

@@ -33,9 +33,13 @@ body,
   --ui-dock-gap-px: 16px;
   --ui-dock-pad-x: 12px;
   --ui-dock-pad-y: 10px;
-  /* Overridden from `main.js` when the viewport header mounts */
-  --ui-header-max-width-px: 1180px;
+  /* Overridden from `main.js` from `layoutProfile.headerBanner` (mobile) or desktop constants */
+  --ui-header-max-width: 1180px;
   --ui-header-offset-y: 0px;
+  --ui-header-object-position: top right;
+  --ui-header-right: max(0px, env(safe-area-inset-right));
+  --ui-header-left: auto;
+  --ui-header-transform: none;
 }
 
 #app {
@@ -83,25 +87,22 @@ body,
   touch-action: none;
 }
 
-#app[data-layout-profile='mobile'] .text-overlays-dock--top-right {
-  flex-direction: column;
-  align-items: flex-end;
-  align-content: flex-end;
-}
+/* Mobile uses the same row dock as desktop (see `.text-overlays-dock--top-right`); a column stack
+   would place each label on a different Y — only add `flex-direction: column` here if you want that. */
 
-/* Viewport-locked (not 3D); `object-position: top right` keeps the graphic pinned to the top-right when sized */
+/* Viewport-locked (not 3D); desktop pins top-right via vars, mobile overrides in layoutProfile.headerBanner */
 .viewport-header-banner {
   position: fixed;
   top: calc(max(0px, env(safe-area-inset-top)) + var(--ui-header-offset-y, 0px));
-  right: max(0px, env(safe-area-inset-right));
-  left: auto;
+  right: var(--ui-header-right, max(0px, env(safe-area-inset-right)));
+  left: var(--ui-header-left, auto);
+  transform: var(--ui-header-transform, none);
   width: auto;
   height: auto;
-  /* Fixed px cap only — no 100vw min(), or the banner shrinks on slender / narrow viewports */
-  max-width: var(--ui-header-max-width-px, 1180px);
-  max-height: none;
+  max-width: var(--ui-header-max-width, 1180px);
+  max-height: var(--ui-header-max-height, none);
   object-fit: contain;
-  object-position: top right;
+  object-position: var(--ui-header-object-position, top right);
   pointer-events: none;
   /* Above bg layers (0), below WebGL canvas and UI */
   z-index: 1;
@@ -132,7 +133,7 @@ body,
 
 .text-overlays-dock--top-right {
   position: fixed;
-  top: max(var(--ui-dock-pad-y), env(safe-area-inset-top));
+  top: var(--ui-dock-top, max(var(--ui-dock-pad-y), env(safe-area-inset-top)));
   left: 0;
   right: 0;
   width: 100%;
