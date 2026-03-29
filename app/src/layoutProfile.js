@@ -132,11 +132,11 @@ function mobileProfile() {
     swipeDominanceRatio: 0.2,
     /** Smaller = faster scrub through all slides for a given drag distance. */
     slideStackDragPxPerSlide: 80,
-    slideStackDragArmPx: 20,
-    slideStackSnapDuration: 2,
+    slideStackDragArmPx: 0,
+    slideStackSnapDuration: 0.5,
     slideStackSnapEase: 'expo.out',
     /** ~25% of each slide transition is “sticky”; past that, motion eases into the next slide. */
-    slideStackMagneticCommit: 0.2,
+    slideStackMagneticCommit: 0.05,
     slideStackMagneticStickPower: 2,
     slideStackMagneticPullPower: 4,
     /** Slight extra follow to avoid shimmer when direction wiggles. */
