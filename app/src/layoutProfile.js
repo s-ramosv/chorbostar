@@ -128,19 +128,19 @@ function mobileProfile() {
     useWindowParallax: false,
     useWheelNav: false,
     useSwipeNav: true,
-    swipeThresholdPx: 80,
-    swipeDominanceRatio: 1.2,
+    swipeThresholdPx: 0,
+    swipeDominanceRatio: 0.2,
     /** Smaller = faster scrub through all slides for a given drag distance. */
     slideStackDragPxPerSlide: 80,
     slideStackDragArmPx: 20,
-    slideStackSnapDuration: 0.4,
+    slideStackSnapDuration: 2,
     slideStackSnapEase: 'expo.out',
     /** ~25% of each slide transition is “sticky”; past that, motion eases into the next slide. */
     slideStackMagneticCommit: 0.2,
-    slideStackMagneticStickPower: 3,
-    slideStackMagneticPullPower: 5,
+    slideStackMagneticStickPower: 2,
+    slideStackMagneticPullPower: 4,
     /** Slight extra follow to avoid shimmer when direction wiggles. */
-    slideStackMagneticFollow: 0.78,
+    slideStackMagneticFollow: 0.2,
     clearHoverOnPointerEnd: true,
     camera: {
       fov: 88,
