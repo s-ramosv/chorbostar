@@ -14,6 +14,7 @@ function createNeutralEnvMap(renderer) {
 import { loadGltfModel } from './gltfModel.js'
 import { SCENE_OBJECT_CONFIGS, applySceneObjectBehaviour } from './sceneObjects.js'
 import slidesStructure from './slides-structure.json'
+import { mountTextOverlays } from './textOverlays.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 
 // Scene (no solid background so the background video shows through)
@@ -45,6 +46,47 @@ camera.position.z = 2.5
 camera.position.x = -0.6
 camera.position.y = 0.35
 
+/** Subtle view tilt from pointer position (whole window), typical Three.js “mouse parallax”. */
+const CAMERA_PARALLAX_YAW_MAX = 0.02
+const CAMERA_PARALLAX_PITCH_MAX = 0.02
+/** `1` = default, `-1` = invert horizontal parallax. */
+const CAMERA_PARALLAX_YAW_SIGN = -1
+/** `1` = default, `-1` = invert vertical parallax. */
+const CAMERA_PARALLAX_PITCH_SIGN = -1
+const CAMERA_PARALLAX_SMOOTH = 2
+const cameraParallaxBaseRotX = 0
+const cameraParallaxBaseRotY = 0
+const cameraParallaxBaseRotZ = 0
+let cameraParallaxNdcX = 0
+let cameraParallaxNdcY = 0
+let cameraParallaxTargetNdcX = 0
+let cameraParallaxTargetNdcY = 0
+
+function setCameraParallaxFromClient(clientX, clientY) {
+  const w = window.innerWidth
+  const h = window.innerHeight
+  if (w < 1 || h < 1) return
+  cameraParallaxTargetNdcX = (clientX / w) * 2 - 1
+  cameraParallaxTargetNdcY = -((clientY / h) * 2 - 1)
+}
+
+function stepCameraParallax(delta) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    camera.rotation.set(cameraParallaxBaseRotX, cameraParallaxBaseRotY, cameraParallaxBaseRotZ)
+    return
+  }
+  const k = Math.min(1, CAMERA_PARALLAX_SMOOTH * delta)
+  cameraParallaxNdcX += (cameraParallaxTargetNdcX - cameraParallaxNdcX) * k
+  cameraParallaxNdcY += (cameraParallaxTargetNdcY - cameraParallaxNdcY) * k
+  camera.rotation.x =
+    cameraParallaxBaseRotX -
+    cameraParallaxNdcY * CAMERA_PARALLAX_PITCH_MAX * CAMERA_PARALLAX_PITCH_SIGN
+  camera.rotation.y =
+    cameraParallaxBaseRotY +
+    cameraParallaxNdcX * CAMERA_PARALLAX_YAW_MAX * CAMERA_PARALLAX_YAW_SIGN
+  camera.rotation.z = cameraParallaxBaseRotZ
+}
+
 // Renderer
 const container = document.querySelector('#app')
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
@@ -57,22 +99,68 @@ const bgImage = document.getElementById('bg-image')
 const bgCustom = document.getElementById('bg-custom')
 const slideCounterEl = document.getElementById('slide-counter')
 
+// Safari / WebKit (used for video rate limits and slightly larger overlay type to match other browsers’ optics)
+const isSafari =
+  /^((?!chrome|android).)*safari/i.test(navigator.userAgent) || /Apple/.test(navigator.vendor)
+
+/** Viewport-fixed header (DOM, not WebGL) — `public/assets/header/` */
+const HEADER_WEB_IMAGE_PATH = `${import.meta.env.BASE_URL}assets/header/textowebheader.webp`
+const HEADER_WEB_IMAGE_OPACITY = 0.12
+/** Display width cap (px); height follows aspect ratio. Not clamped to 100vw — stays this wide on narrow viewports (clips left). Top-right via `object-position`. */
+const HEADER_WEB_IMAGE_MAX_WIDTH_PX = 1920
+/** Extra downward shift (px); positive moves the banner down; top-right corner alignment uses `right` + `top` + safe-area. */
+const HEADER_WEB_IMAGE_OFFSET_Y_PX = 25
+/**
+ * Viewport overlay text (CSS px) on `#app` as `--ui-fixed-text-px`. WebKit often renders this stack a touch smaller
+ * than Chromium at the same px; bump slightly so it tracks the fixed-width header graphic.
+ */
+const VIEWPORT_UI_TEXT_PX = isSafari ? 18 : 16
+
+container.style.setProperty('--ui-fixed-text-px', `${VIEWPORT_UI_TEXT_PX}px`)
+container.style.setProperty('--ui-header-max-width-px', `${HEADER_WEB_IMAGE_MAX_WIDTH_PX}px`)
+container.style.setProperty('--ui-header-offset-y', `${HEADER_WEB_IMAGE_OFFSET_Y_PX}px`)
+
+mountTextOverlays(container, { viewportTextPx: VIEWPORT_UI_TEXT_PX })
+
+{
+  const headerImg = document.createElement('img')
+  headerImg.className = 'viewport-header-banner'
+  headerImg.src = HEADER_WEB_IMAGE_PATH
+  headerImg.alt = ''
+  headerImg.draggable = false
+  headerImg.style.opacity = String(HEADER_WEB_IMAGE_OPACITY)
+  container.appendChild(headerImg)
+}
+
 // Background hue shift (0–360 degrees); applied to video, image, and custom bg
 const BACKGROUND_HUE_ROTATE_DEG = 0
 container.style.setProperty('--bg-hue-rotate', `${BACKGROUND_HUE_ROTATE_DEG}deg`)
 
-// Video playback rate tied to slide navigation
-const VIDEO_BASE_PLAYBACK_RATE = 0.7    // speed when idle (1 = normal; lower = slower by default)
-const VIDEO_MIN_PLAYBACK_RATE = 0.9     // min when scrolling backward
-const VIDEO_MAX_PLAYBACK_RATE = 50      // max speed when scrolling forward
-const VIDEO_CURVE_STRENGTH = 6          // how much velocity affects rate (smooth curve)
-const VIDEO_VELOCITY_SCALE = 0.8        // scale for velocity before tanh (higher = gentler curve)
-const VIDEO_VELOCITY_SMOOTHING = 1      // 0–1, how fast smoothed velocity follows target (higher = snappier)
-// Safari often only allows playbackRate >= 0.5; use effective min so we don't throw
-const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent) || /Apple/.test(navigator.vendor)
-const VIDEO_MIN_RATE_EFFECTIVE = isSafari ? Math.max(0.5, VIDEO_MIN_PLAYBACK_RATE) : VIDEO_MIN_PLAYBACK_RATE
-const VIDEO_RATE_TIED_TO_SCROLL = !isSafari  // on Safari (incl. iOS) just show video at 1x
-let videoScrollVelocity = 0               // smoothed: positive = forward, negative = backward
+// Background video: same ramp / coast idea as the Xbox logo (`LOGO_RAMP_*`), but **forward `playbackRate` only**
+// (no reverse playback — slide “back” still drives idle→fast forward via stimulus, never negative rate).
+const VIDEO_PLAYBACK_IDLE = 0.5        // `playbackRate` scale when nav stimulus is 0
+const VIDEO_PLAYBACK_PEAK_EXTRA = 4  // extra scale when stimulus = 1 (pairs with `LOGO_NAV_PEAK_EXTRA` feel)
+const VIDEO_MAX_SIGNED_RATE = 8      // clamp on nonnegative `videoSignedPlaybackRate`
+/**
+ * 1/s — how fast `videoSignedPlaybackRate` chases its target when **speeding up** (higher = snappier).
+ * Coast / settle still use `LOGO_COAST_DECAY` / `LOGO_RAMP_DOWN`.
+ */
+const VIDEO_SPEED_RAMP_UP = 8
+/** Safari / iOS WebKit: no logo-linked variable speed — background video stays 1×. */
+const VIDEO_LOGO_LINKED_PLAYBACK = !isSafari
+// Minimum positive `playbackRate` when physics is enabled (Safari often ≥ 0.5)
+const VIDEO_MIN_RATE_EFFECTIVE = isSafari ? 0.5 : 0.25
+const VIDEO_BG_DEFAULT_RATE = VIDEO_LOGO_LINKED_PLAYBACK
+  ? Math.max(VIDEO_MIN_RATE_EFFECTIVE, VIDEO_PLAYBACK_IDLE)
+  : 1
+/** Browser clamp for forward `playbackRate`. */
+const VIDEO_PLAYBACK_RATE_HARD_MAX = 16
+/**
+ * If the playhead sits within this much of `duration` (slow/variable `ended`), snap to 0 so playback doesn’t stall.
+ */
+const VIDEO_FORWARD_END_SNAP_EPS = 0.04
+/** Nonnegative forward playback scale; smoothed toward `VIDEO_PLAYBACK_IDLE + peak * stimulus`. */
+let videoSignedPlaybackRate = VIDEO_PLAYBACK_IDLE
 
 // Xbox logo: smooth angular velocity toward a target; decaying stimulus (0–1) from slide enter or overscroll.
 const LOGO_IDLE_OMEGA = 0.2 // rad/s at stimulus 0
@@ -103,6 +191,12 @@ bgVideo.addEventListener('ended', () => {
     } catch (_) {}
   })
 })
+for (const ev of ['stalled', 'waiting']) {
+  bgVideo.addEventListener(ev, () => {
+    if (!bgVideo.classList.contains('is-active')) return
+    bgVideo.play().catch(() => {})
+  })
+}
 
 const BACKGROUND_CROSSFADE_DURATION = 0.4
 
@@ -116,7 +210,7 @@ function getActiveBgLayer() {
 function setBackgroundForPath() {
   const config = getBackgroundConfig(path)
   const currentLayer = getActiveBgLayer()
-  videoScrollVelocity = 0
+  videoSignedPlaybackRate = VIDEO_PLAYBACK_IDLE
   bgVideo.pause()
 
   let newLayer
@@ -170,7 +264,7 @@ function setBackgroundForPath() {
     if (newLayer === bgVideo && newSrc) {
       bgVideo.src = newSrc
       bgVideo.currentTime = 0
-      bgVideo.playbackRate = VIDEO_BASE_PLAYBACK_RATE
+      bgVideo.playbackRate = VIDEO_BG_DEFAULT_RATE
       bgVideo.play().catch(() => {})
     }
     newLayer.classList.add('is-active')
@@ -187,7 +281,7 @@ function setBackgroundForPath() {
         if (newLayer === bgVideo && newSrc) {
           bgVideo.src = newSrc
           bgVideo.currentTime = 0
-          bgVideo.playbackRate = VIDEO_BASE_PLAYBACK_RATE
+          bgVideo.playbackRate = VIDEO_BG_DEFAULT_RATE
           bgVideo.play().catch(() => {})
         }
         gsap.to(newLayer, {
@@ -207,7 +301,7 @@ function setBackgroundForPath() {
   if (newLayer === bgVideo && newSrc) {
     bgVideo.src = newSrc
     bgVideo.currentTime = 0
-    bgVideo.playbackRate = VIDEO_BASE_PLAYBACK_RATE
+    bgVideo.playbackRate = VIDEO_BG_DEFAULT_RATE
   }
   newLayer.style.opacity = '0'
   newLayer.style.zIndex = '1'
@@ -247,6 +341,7 @@ let sitIdleVideoTexture = null
 
 // 3D objects: load from SCENE_OBJECT_CONFIGS (see sceneObjects.js)
 overlayScene.add(camera)
+
 SCENE_OBJECT_CONFIGS.forEach((objConfig) => {
   loadGltfModel(scene, objConfig.url, {
     position: { x: 0, y: 0, z: 0 },
@@ -297,7 +392,7 @@ fbxLoader.load(
     // Apply video as diffuse texture and keep normal map for lighting/silhouette
     const SIT_IDLE_BASE = '/assets/3D/sit-idle/'
     const video = document.createElement('video')
-    video.src = SIT_IDLE_BASE + encodeURI('texture7.mp4')
+    video.src = SIT_IDLE_BASE + encodeURI('texture8.mp4')
     video.loop = true
     video.muted = true
     video.playsInline = true
@@ -385,17 +480,17 @@ function currentGroup() {
 }
 
 // Slot positions: configurable curved trajectory from first slot to last slot.
-const X_START = -2
+const X_START = -2.25
 const Z_START = 0
 const X_STEP = 1.7
 const Z_STEP = -0.8
-const SCALE = 1.5
+const SCALE = 1.33
 
 // Curve controls for stack trajectory.
 // Keep defaults close to the current linear stack; tweak these to experiment.
 const STACK_CURVE_USE_CUSTOM_END = true
-const STACK_CURVE_START = { x: X_START * SCALE, y: 0, z: Z_START * SCALE }
-const STACK_CURVE_END = { x: 15, y: 0, z: -10.0 } // used when STACK_CURVE_USE_CUSTOM_END = true
+const STACK_CURVE_START = { x: X_START * SCALE, y: -0.12, z: Z_START * SCALE }
+const STACK_CURVE_END = { x: 15, y: 1, z: -10.0 } // used when STACK_CURVE_USE_CUSTOM_END = true
 const STACK_CURVE_PLANE = 'xz' // 'xz' | 'xy' | 'yz'
 const STACK_CURVE_BEND = -1 // signed amount of curvature in plane units (0 = straight line)
 const STACK_CURVE_VERTICAL_BEND = 0 // secondary axis bend (e.g. arc lift/drop)
@@ -498,6 +593,57 @@ const PRESS_SHRINK_DURATION = 0.08
 const PRESS_RESTORE_DURATION = 0.16
 const PRESS_SCALE = 0.75
 
+/**
+ * Extra world Y rotation (rad) on the visible front stack slide; the next slide stays at 0 relative to this.
+ * Positive ≈ front card’s right edge swings toward the camera in the default layout (negate to flip).
+ * `gltfSlideIndex` blends between slides during navigation so the handoff stays smooth.
+ */
+const FRONT_SLIDE_STACK_YAW_RAD = Math.PI / 16
+/** Slide-index span over which the old front eases stack yaw to 0 as it moves past the front. */
+const FRONT_SLIDE_STACK_YAW_EXIT_BLEND = 0.8
+
+/**
+ * World Y rotation (rad) when a slide is fully “off” the front (past the float front index while leaving).
+ * Blends smoothly from stack yaw (front tilt) ↔ this value using `gltfSlideIndex`, so going forward and backward match.
+ */
+const SLIDE_OFF_FRAME_YAW_RAD = Math.PI / 4
+/**
+ * How wide the rotation blend is in slide-index space (same units as `gltfSlideIndex` tween).
+ * Larger = longer ease between front stack pose and off-frame pose.
+ */
+const SLIDE_OFF_FRAME_ROTATION_BLEND = 1
+
+/** Pointer-driven tilt on the front slide only (adds on top of stack / off-frame yaw). */
+const FRONT_SLIDE_HOVER_TILT_ENABLED = true
+/** Max pitch (rotation.x, rad) from pointer top vs bottom on the card. */
+const FRONT_SLIDE_HOVER_TILT_MAX_X = 0.05
+/** Max extra yaw (rotation.y, rad) from pointer left vs right on the card. */
+const FRONT_SLIDE_HOVER_TILT_MAX_Y = 0.05
+/** How fast hover tilt follows the pointer (1/s). */
+const FRONT_SLIDE_HOVER_TILT_SMOOTH = 8
+
+/** Front slide: scale + world offset on hover (separate from deeper slides). */
+const FRONT_SLIDE_HOVER_POP_ENABLED = true
+const FRONT_SLIDE_HOVER_POP_SCALE = 1.04
+const FRONT_SLIDE_HOVER_POP_LIFT_WORLD = 0.14
+const FRONT_SLIDE_HOVER_POP_LIFT_X = 0
+const FRONT_SLIDE_HOVER_POP_LIFT_Y = 0.04
+const FRONT_SLIDE_HOVER_POP_SMOOTH = 8
+
+/** Smooth front-card stack / off-frame yaw when `gltfSlideIndex` snaps after a slide advance (1/s). */
+const FRONT_STACK_VISUAL_YAW_SMOOTH = 14
+
+/** Deeper (non-front) visible slides: scale + offset toward camera on hover. */
+const DEEP_SLIDE_HOVER_ENABLED = true
+const DEEP_SLIDE_HOVER_SCALE = 1.07
+/** World-units pop along XZ toward the camera. */
+const DEEP_SLIDE_HOVER_LIFT_WORLD = 0.32
+/** Optional sideways nudge while hovered (world X). */
+const DEEP_SLIDE_HOVER_LIFT_X = 0.2
+/** Optional upward nudge while hovered (world Y). */
+const DEEP_SLIDE_HOVER_LIFT_Y = 0.0
+const DEEP_SLIDE_HOVER_SMOOTH = 12
+
 /** World position of the page-turn axis: left border of canvas at given depth, same y as slide. */
 function getPageTurnAxis(slidePos) {
   const leftNDC = new THREE.Vector3(-1, 0, 0.5).unproject(camera)
@@ -507,12 +653,83 @@ function getPageTurnAxis(slidePos) {
   return { x: axis.x, y: slidePos.y ?? 0, z: slidePos.z }
 }
 
-/** Set card position and rotation for a given angle around the page-turn axis. restX = front-slot x when angle is 0. */
+/** Y rotation from page-turn animations only; combined with stack yaw in syncSlideStackRotations(). */
 function setCardPageTurnState(card, axis, angle, restX) {
+  card.userData.pageTurnY = angle
   const dx = restX - axis.x
   card.position.x = axis.x + dx * Math.cos(angle)
   card.position.z = axis.z + dx * Math.sin(angle)
-  card.rotation.y = angle
+}
+
+function getSlideStackYawRad(slideIndex, frontFloat) {
+  const maxYaw = FRONT_SLIDE_STACK_YAW_RAD
+  if (maxYaw === 0) return 0
+  const d = slideIndex - frontFloat
+  if (d >= 1) return 0
+  if (d >= 0) {
+    return maxYaw * (1 - THREE.MathUtils.smoothstep(d, 0, 1))
+  }
+  const b = Math.max(1e-4, FRONT_SLIDE_STACK_YAW_EXIT_BLEND)
+  if (d <= -b) return 0
+  return maxYaw * THREE.MathUtils.smoothstep(d, -b, 0)
+}
+
+/** 0 = use stack yaw only; 1 = use SLIDE_OFF_FRAME_YAW_RAD (slide has moved past the float front). */
+function getOffFrameYawBlend(slideIndex, frontFloat) {
+  if (SLIDE_OFF_FRAME_YAW_RAD === 0) return 0
+  const w = Math.max(1e-4, SLIDE_OFF_FRAME_ROTATION_BLEND)
+  const delta = slideIndex - frontFloat
+  if (delta >= 0) return 0
+  if (delta <= -w) return 1
+  return 1 - THREE.MathUtils.smoothstep(delta, -w, 0)
+}
+
+function getCombinedStackVisualYawRad(slideIndex, frontFloat) {
+  const stackYaw = getSlideStackYawRad(slideIndex, frontFloat)
+  const offBlend = getOffFrameYawBlend(slideIndex, frontFloat)
+  return THREE.MathUtils.lerp(stackYaw, SLIDE_OFF_FRAME_YAW_RAD, offBlend)
+}
+
+let _frontStackYawSmoothed = 0
+let _frontStackYawSmoothedForIndex = -1
+
+function syncSlideStackRotations(delta) {
+  const noStackTilt = FRONT_SLIDE_STACK_YAW_RAD === 0
+  const noOffFrame = SLIDE_OFF_FRAME_YAW_RAD === 0
+  if (noStackTilt && noOffFrame && cards.every((c) => (c.userData.pageTurnY ?? 0) === 0)) {
+    for (let i = 0; i < cards.length; i++) {
+      const c = cards[i]
+      const page = c.userData.pageTurnY ?? 0
+      c.rotation.x = 0
+      if (c.rotation.y !== page) c.rotation.y = page
+    }
+    return
+  }
+
+  const useSmoothFrontStack = !noStackTilt || !noOffFrame
+  const frontIdx = currentIndex
+  if (useSmoothFrontStack && cards[frontIdx]) {
+    if (_frontStackYawSmoothedForIndex !== frontIdx) {
+      _frontStackYawSmoothed = getCombinedStackVisualYawRad(frontIdx, gltfSlideIndex)
+      _frontStackYawSmoothedForIndex = frontIdx
+    }
+    const targetYaw = getCombinedStackVisualYawRad(frontIdx, gltfSlideIndex)
+    const sk = 1 - Math.exp(-FRONT_STACK_VISUAL_YAW_SMOOTH * delta)
+    _frontStackYawSmoothed += (targetYaw - _frontStackYawSmoothed) * sk
+  }
+
+  for (let i = 0; i < cards.length; i++) {
+    const c = cards[i]
+    const idx = c.userData?.index
+    if (idx == null) continue
+    const page = c.userData.pageTurnY ?? 0
+    c.rotation.x = 0
+    const stackPart =
+      useSmoothFrontStack && idx === frontIdx
+        ? _frontStackYawSmoothed
+        : getCombinedStackVisualYawRad(idx, gltfSlideIndex)
+    c.rotation.y = page + stackPart
+  }
 }
 
 const BASE_DURATION = 0.6
@@ -534,6 +751,171 @@ function getDurationForDirection(direction) {
 
 const CARD_WIDTH = 1.4 * 1.5 * SCALE
 const CARD_HEIGHT = 1.4 * 1.5 * SCALE
+
+let hoverTiltTargetX = 0
+let hoverTiltTargetY = 0
+let hoverTiltCurrentX = 0
+let hoverTiltCurrentY = 0
+let pointerIsOverCanvas = false
+/** Slide index under pointer for deep-stack hover, or -1. */
+let hoverDeepIndex = -1
+/** True when pointer is over the front slide (for pop lift / scale). */
+let hoverFrontPop = false
+
+const _hoverLocal = new THREE.Vector3()
+const _deepHoverDir = new THREE.Vector3()
+
+function updateSlideHoverFromPointer(clientX, clientY) {
+  hoverTiltTargetX = 0
+  hoverTiltTargetY = 0
+  hoverDeepIndex = -1
+  hoverFrontPop = false
+  if (cards.length === 0 || isTransitioning) return
+
+  const el = renderer.domElement
+  const rect = el.getBoundingClientRect()
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return
+
+  mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1
+  mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1
+  raycaster.setFromCamera(mouse, camera)
+  const hits = raycaster.intersectObjects(cardMeshes)
+  if (hits.length === 0) return
+
+  // Match click behaviour: prefer the current front card so vanishing / stacked meshes
+  // closer along Z do not eat the ray and shrink the hover “effective area”.
+  const frontHit = hits.find((h) => h.object.parent?.userData?.index === currentIndex)
+  const hit = frontHit ?? hits[0]
+  const group3d = hit.object.parent
+  const idx = group3d?.userData?.index
+  if (idx == null) return
+
+  const front = cards[currentIndex]
+  const pageTurnBusy = front && Math.abs(front.userData.pageTurnY ?? 0) > 1e-5
+
+  if (idx === currentIndex && group3d === cards[currentIndex] && !pageTurnBusy && !activeTimeline) {
+    if (FRONT_SLIDE_HOVER_POP_ENABLED) hoverFrontPop = true
+    if (FRONT_SLIDE_HOVER_TILT_ENABLED) {
+      _hoverLocal.copy(hit.point)
+      group3d.worldToLocal(_hoverLocal)
+      const halfW = CARD_WIDTH * 0.5
+      const halfH = CARD_HEIGHT * 0.5
+      const nx = THREE.MathUtils.clamp(_hoverLocal.x / halfW, -1, 1)
+      const ny = THREE.MathUtils.clamp(_hoverLocal.y / halfH, -1, 1)
+      hoverTiltTargetX = -ny * FRONT_SLIDE_HOVER_TILT_MAX_X
+      hoverTiltTargetY = nx * FRONT_SLIDE_HOVER_TILT_MAX_Y
+    }
+    return
+  }
+
+  if (
+    DEEP_SLIDE_HOVER_ENABLED &&
+    idx > currentIndex &&
+    !activeTimeline &&
+    group3d === cards[idx] &&
+    getCardOpacity(cards[idx]) > 0.05
+  ) {
+    hoverDeepIndex = idx
+  }
+}
+
+function stepAndApplyFrontSlideHoverTilt(delta) {
+  if (!FRONT_SLIDE_HOVER_TILT_ENABLED || cards.length === 0) return
+  const k = 1 - Math.exp(-FRONT_SLIDE_HOVER_TILT_SMOOTH * delta)
+  const front = cards[currentIndex]
+  if (!pointerIsOverCanvas || isTransitioning || (front && Math.abs(front.userData.pageTurnY ?? 0) > 1e-5)) {
+    hoverTiltTargetX = 0
+    hoverTiltTargetY = 0
+  }
+  hoverTiltCurrentX += (hoverTiltTargetX - hoverTiltCurrentX) * k
+  hoverTiltCurrentY += (hoverTiltTargetY - hoverTiltCurrentY) * k
+  if (!front) return
+  front.rotation.x = hoverTiltCurrentX
+  front.rotation.y += hoverTiltCurrentY
+}
+
+function stepAndApplyDeepSlideHover(delta) {
+  if (!DEEP_SLIDE_HOVER_ENABLED || cards.length === 0) return
+  const k = 1 - Math.exp(-DEEP_SLIDE_HOVER_SMOOTH * delta)
+  const allowDeep =
+    pointerIsOverCanvas && !isTransitioning && !activeTimeline
+
+  for (let i = 0; i < cards.length; i++) {
+    if (i === currentIndex) continue
+    const c = cards[i]
+    const wantLift = allowDeep && i === hoverDeepIndex ? DEEP_SLIDE_HOVER_LIFT_WORLD : 0
+    const wantX = allowDeep && i === hoverDeepIndex ? DEEP_SLIDE_HOVER_LIFT_X : 0
+    const wantY = allowDeep && i === hoverDeepIndex ? DEEP_SLIDE_HOVER_LIFT_Y : 0
+    const wantScale = allowDeep && i === hoverDeepIndex ? DEEP_SLIDE_HOVER_SCALE : 1
+
+    const prevLift = c.userData._hoverLiftApplied ?? 0
+    const prevX = c.userData._hoverXApplied ?? 0
+    const prevY = c.userData._hoverYApplied ?? 0
+    _deepHoverDir.subVectors(camera.position, c.position)
+    _deepHoverDir.y = 0
+    if (_deepHoverDir.lengthSq() < 1e-8) _deepHoverDir.set(0, 0, 1)
+    else _deepHoverDir.normalize()
+
+    c.position.x -= _deepHoverDir.x * prevLift + prevX
+    c.position.z -= _deepHoverDir.z * prevLift
+    c.position.y -= prevY
+
+    const newLift = prevLift + (wantLift - prevLift) * k
+    const newX = prevX + (wantX - prevX) * k
+    const newY = prevY + (wantY - prevY) * k
+    c.position.x += _deepHoverDir.x * newLift + newX
+    c.position.z += _deepHoverDir.z * newLift
+    c.position.y += newY
+    c.userData._hoverLiftApplied = newLift
+    c.userData._hoverXApplied = newX
+    c.userData._hoverYApplied = newY
+
+    const curS = c.scale.x
+    const newS = curS + (wantScale - curS) * k
+    c.scale.setScalar(newS)
+  }
+}
+
+function stepAndApplyFrontSlideHoverPop(delta) {
+  if (!FRONT_SLIDE_HOVER_POP_ENABLED || cards.length === 0) return
+  const k = 1 - Math.exp(-FRONT_SLIDE_HOVER_POP_SMOOTH * delta)
+  const front = cards[currentIndex]
+  if (!front) return
+  const pageBusy = Math.abs(front.userData.pageTurnY ?? 0) > 1e-5
+  const allowPop =
+    pointerIsOverCanvas && !isTransitioning && !activeTimeline && hoverFrontPop && !pageBusy
+
+  const wantLift = allowPop ? FRONT_SLIDE_HOVER_POP_LIFT_WORLD : 0
+  const wantX = allowPop ? FRONT_SLIDE_HOVER_POP_LIFT_X : 0
+  const wantY = allowPop ? FRONT_SLIDE_HOVER_POP_LIFT_Y : 0
+  const wantScale = allowPop ? FRONT_SLIDE_HOVER_POP_SCALE : 1
+
+  const prevLift = front.userData._hoverLiftApplied ?? 0
+  const prevX = front.userData._hoverXApplied ?? 0
+  const prevY = front.userData._hoverYApplied ?? 0
+  _deepHoverDir.subVectors(camera.position, front.position)
+  _deepHoverDir.y = 0
+  if (_deepHoverDir.lengthSq() < 1e-8) _deepHoverDir.set(0, 0, 1)
+  else _deepHoverDir.normalize()
+
+  front.position.x -= _deepHoverDir.x * prevLift + prevX
+  front.position.z -= _deepHoverDir.z * prevLift
+  front.position.y -= prevY
+
+  const newLift = prevLift + (wantLift - prevLift) * k
+  const newX = prevX + (wantX - prevX) * k
+  const newY = prevY + (wantY - prevY) * k
+  front.position.x += _deepHoverDir.x * newLift + newX
+  front.position.z += _deepHoverDir.z * newLift
+  front.position.y += newY
+  front.userData._hoverLiftApplied = newLift
+  front.userData._hoverXApplied = newX
+  front.userData._hoverYApplied = newY
+
+  const curS = front.scale.x
+  const newS = curS + (wantScale - curS) * k
+  front.scale.setScalar(newS)
+}
 
 /** Set false to use MeshBasicMaterial for art — no blur shader, no per-frame blur uniform updates (lightest path). */
 const SLIDE_STACK_BLUR_ENABLED = false
@@ -736,7 +1118,7 @@ function createCardsForGroup(group, parentIndexForLabels) {
     const node = group[i]
     const pos = positions[i]
     const group3d = new THREE.Group()
-    group3d.userData = { index: i, parentIndex: parentIndexForLabels }
+    group3d.userData = { index: i, parentIndex: parentIndexForLabels, pageTurnY: 0 }
     group3d.position.set(pos.x, pos.y ?? 0, pos.z)
     if (!node.art) {
       const border = new THREE.Mesh(borderGeometry, borderMaterial.clone())
@@ -866,6 +1248,7 @@ function switchToGroup(group, parentIndexForLabels, frontIndex) {
   if (activeTimeline) activeTimeline.kill()
   activeTimeline = null
   logoSlideNavDir = 0
+  _frontStackYawSmoothedForIndex = -1
   if (cards.length) {
     removeCardsFromScene(cards)
     cards = []
@@ -1043,6 +1426,7 @@ function enterChildWithTransition() {
   preloadGroupArt(group)
 
   const n = group.length
+  /** Visual front is always stack slot 0 even when `currentIndex` > 0 (see `switchToGroup`). */
   const slot0 = slotPositions[0]
   const axis = getPageTurnAxis(slot0)
   const restX = slot0.x
@@ -1179,6 +1563,7 @@ function goBackWithTransition() {
       slotPositions = getSlotPositions(parentGroup.length)
       currentIndex = frontIndex
       targetIndex = frontIndex
+      gltfSlideIndex = frontIndex
       cards = createCardsForGroup(parentGroup, parentIndexForLabels)
       cardMeshes = cards.map((g) => g.userData.hitMesh)
       requestAnimationFrame(() => setBackgroundForPath())
@@ -1194,11 +1579,14 @@ function goBackWithTransition() {
       }
       cards[frontIndex].renderOrder = 1
 
-      setCardPageTurnState(cards[frontIndex], parentAxis, Math.PI / 2, parentRestX)
       const vanish = getVanishPosition()
       for (let i = 0; i < frontIndex; i++) {
         cards[i].position.set(vanish.x, vanish.y ?? 0, vanish.z)
       }
+      // Match `switchToGroup`: the deck’s front slide sits at stack slot 0, not slot `frontIndex`.
+      const frontStackSlot = parentSlot0
+      cards[frontIndex].position.set(frontStackSlot.x, frontStackSlot.y ?? 0, frontStackSlot.z)
+      setCardPageTurnState(cards[frontIndex], parentAxis, Math.PI / 2, parentRestX)
       for (let i = frontIndex + 1; i < parentN; i++) {
         cards[i].position.set(parentSlot0.x, parentSlot0.y ?? 0, parentSlot0.z - COLLAPSE_OFFSET_Z * (i - frontIndex))
       }
@@ -1550,11 +1938,73 @@ function onCanvasClick(e) {
 }
 renderer.domElement.addEventListener('click', onCanvasClick)
 
+renderer.domElement.addEventListener('pointerenter', () => {
+  pointerIsOverCanvas = true
+})
+renderer.domElement.addEventListener('pointerleave', () => {
+  pointerIsOverCanvas = false
+  hoverTiltTargetX = 0
+  hoverTiltTargetY = 0
+  hoverDeepIndex = -1
+  hoverFrontPop = false
+})
+renderer.domElement.addEventListener('pointermove', (e) => {
+  pointerIsOverCanvas = true
+  updateSlideHoverFromPointer(e.clientX, e.clientY)
+})
+
+window.addEventListener('pointermove', (e) => {
+  setCameraParallaxFromClient(e.clientX, e.clientY)
+}, { passive: true })
+document.documentElement.addEventListener('mouseleave', () => {
+  cameraParallaxTargetNdcX = 0
+  cameraParallaxTargetNdcY = 0
+})
+
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight
   camera.updateProjectionMatrix()
   renderer.setSize(window.innerWidth, window.innerHeight)
 })
+
+function stepBackgroundVideoPlayback() {
+  if (!bgVideo.classList.contains('is-active')) return
+
+  const kickPlay = () => {
+    bgVideo.play().catch(() => {})
+  }
+
+  if (!VIDEO_LOGO_LINKED_PLAYBACK) {
+    try {
+      if (bgVideo.readyState >= 2 && Math.abs(bgVideo.playbackRate - 1) > 0.01) bgVideo.playbackRate = 1
+      kickPlay()
+    } catch (_) {}
+    return
+  }
+
+  // Brief `readyState` dips skip rate tweaks but still nudge `play()` so we don’t stay paused after a buffer hitch.
+  if (bgVideo.readyState < 2) {
+    kickPlay()
+    return
+  }
+
+  const mag = Math.min(VIDEO_MAX_SIGNED_RATE, Math.max(0, videoSignedPlaybackRate))
+  const minMag = VIDEO_MIN_RATE_EFFECTIVE
+  const clampedMag = Math.min(VIDEO_PLAYBACK_RATE_HARD_MAX, Math.max(minMag, mag))
+
+  const dur = bgVideo.duration
+  if (Number.isFinite(dur) && dur > VIDEO_FORWARD_END_SNAP_EPS * 2) {
+    if (bgVideo.currentTime >= dur - VIDEO_FORWARD_END_SNAP_EPS) {
+      try {
+        bgVideo.currentTime = 0
+      } catch (_) {}
+    }
+  }
+  try {
+    if (Math.abs(bgVideo.playbackRate - clampedMag) > 0.01) bgVideo.playbackRate = clampedMag
+    kickPlay()
+  } catch (_) {}
+}
 
 function animate() {
   requestAnimationFrame(animate)
@@ -1563,19 +2013,6 @@ function animate() {
   if (sitIdleVideoTexture?.image?.readyState >= 2) sitIdleVideoTexture.needsUpdate = true
   const total = numSlides()
   slideCounterEl.textContent = `${targetIndex + 1} of ${total}`
-
-  // Video playback rate from slide “velocity” (disabled on iOS: show video at 1x only)
-  if (VIDEO_RATE_TIED_TO_SCROLL && bgVideo.classList.contains('is-active') && bgVideo.readyState >= 2) {
-    const velocityTarget = targetIndex - gltfSlideIndex
-    videoScrollVelocity += (velocityTarget - videoScrollVelocity) * VIDEO_VELOCITY_SMOOTHING
-    const curve = Math.tanh(videoScrollVelocity / VIDEO_VELOCITY_SCALE)
-    const rate = Math.max(VIDEO_MIN_RATE_EFFECTIVE, Math.min(VIDEO_MAX_PLAYBACK_RATE, VIDEO_BASE_PLAYBACK_RATE + VIDEO_CURVE_STRENGTH * curve))
-    if (Math.abs(bgVideo.playbackRate - rate) > 0.01) {
-      try {
-        bgVideo.playbackRate = rate
-      } catch (_) {}
-    }
-  }
 
   if (logoSlideNavDir !== 0) {
     logoLastSpinDir = logoSlideNavDir
@@ -1608,6 +2045,27 @@ function animate() {
   logoAngularVelocity = THREE.MathUtils.clamp(logoAngularVelocity, -LOGO_MAX_OMEGA, LOGO_MAX_OMEGA)
   logoSpinAngle += logoAngularVelocity * delta
 
+  if (VIDEO_LOGO_LINKED_PLAYBACK) {
+    const videoRateTarget = VIDEO_PLAYBACK_IDLE + VIDEO_PLAYBACK_PEAK_EXTRA * logoNavStimulus
+    const videoRateErr = videoRateTarget - videoSignedPlaybackRate
+    const videoSpeedingUp = videoRateTarget > videoSignedPlaybackRate
+    const videoExcessDecaying =
+      videoSignedPlaybackRate > videoRateTarget + 0.02
+    const videoRamp = videoSpeedingUp
+      ? VIDEO_SPEED_RAMP_UP
+      : videoExcessDecaying
+        ? LOGO_COAST_DECAY
+        : LOGO_RAMP_DOWN
+    videoSignedPlaybackRate += videoRateErr * Math.min(1, videoRamp * delta)
+    videoSignedPlaybackRate = THREE.MathUtils.clamp(
+      videoSignedPlaybackRate,
+      0,
+      VIDEO_MAX_SIGNED_RATE
+    )
+  }
+  stepBackgroundVideoPlayback()
+  stepCameraParallax(delta)
+
   _slideCounterPos.set(SLIDE_COUNTER_X, SLIDE_COUNTER_Y, 0).project(camera)
   const px = (_slideCounterPos.x * 0.5 + 0.5) * window.innerWidth
   const py = (-_slideCounterPos.y * 0.5 + 0.5) * window.innerHeight
@@ -1615,6 +2073,10 @@ function animate() {
   slideCounterEl.style.top = `${py}px`
   const pathIndices = path.slice(1).map((p) => p.parentIndex)
   updateSlideArtEffects()
+  syncSlideStackRotations(delta)
+  stepAndApplyFrontSlideHoverTilt(delta)
+  stepAndApplyDeepSlideHover(delta)
+  stepAndApplyFrontSlideHoverPop(delta)
   const context = { numSlides: total, gltfSlideIndex, camera, pathIndices, logoSpinAngle }
   SCENE_OBJECT_CONFIGS.forEach((objConfig) => {
     if (objConfig.model) applySceneObjectBehaviour(objConfig.model, objConfig, context)

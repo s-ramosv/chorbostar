@@ -1,40 +1,56 @@
 {
-  "rootBackground": { "type": "video", "src": "/assets/bg-bw.mp4" },
+  "rootBackground": { "type": "video", "src": "/assets/bg-bw2.mp4"},
   "root": [
     {
-      "name": "Spotify",
-      "art": "/assets/slides/1spoty.webp",
+      "name": "spoty",
+      "art": "/assets/slides/2spoty.webp",
       "children": [],
       "link": "https://open.spotify.com/artist/7oRULWYKcTeuJhxKhJqDyi?si=cZZvtQe2QiKizAq6LUe6rw",
       "background": { "type": "custom" }
     },
     {
-      "name": "Instagram",
-      "art": "/assets/slides/1ig.webp",
-      "children": [],
-      "link": "https://instagram.com",
-      "background": { "type": "custom" }
+      "name": "Slide 1",
+      "art": "/assets/slides/2spoty.webp",
+      "children": [
+        {
+          "children": [
+            { "children": [] },
+            { "children": [] },
+            { "children": [] }
+          ],
+          "background": { "type": "image", "src": "/assets/grass5.jpg" }
+        }
+      ],
+      "background": { "type": "image", "src": "/assets/grass5.jpg" }
     },
     {
-      "name": "YouTube",
-      "art": "/assets/slides/1yt.webp",
-      "children": [],
-      "link": "https://youtube.com",
-      "background": { "type": "custom" }
+      "name": "Slide 2",
+      "art": "/assets/slides/2ig.webp",
+      "children": [{ "children": [] }],
+      "background": { "type": "image", "src": "/assets/grass5.jpg" }
     },
     {
-      "name": "Git",
-      "art": "/assets/slides/1git.webp",
-      "children": [],
-      "link": "https://github.com",
-      "background": { "type": "custom" }
+      "name": "Slide 3",
+      "art": "/assets/slides/2yt.webp",
+      "children": [{ "children": [] }, { "children": [] }],
+      "background": { "type": "image", "src": "/assets/list/3.jpg" }
     },
     {
-      "name": "TikTok",
-      "art": "/assets/slides/1tiktok.webp",
-      "children": [],
-      "link": "https://github.com",
-      "background": { "type": "custom" }
+      "name": "Slide 4",
+      "art": "/assets/slides/2git2.webp",
+      "children": [{ "children": [] }, { "children": [] }, { "children": [] }],
+      "background": { "type": "image", "src": "/assets/list/4.jpg" }
+    },
+    {
+      "name": "Slide 5",
+      "art": "/assets/slides/2tiktok.webp",
+      "children": [
+        { "children": [] },
+        { "children": [] },
+        { "children": [] },
+        { "children": [] }
+      ],
+      "background": { "type": "image", "src": "/assets/list/5.jpg" }
     }
   ]
 }

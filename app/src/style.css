@@ -6,11 +6,36 @@
   padding: 0;
 }
 
+html {
+  font-size: 16px;
+  overflow-x: clip;
+  /* `100%` still allows adjustment on some WebKit builds; `none` locks declared px */
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+}
+
 html,
 body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+body,
+#app {
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+}
+
+/* Fixed-size viewport UI (px): does not shrink when the window gets wider / 16:9 */
+:root {
+  --ui-fixed-text-px: 16px;
+  --ui-dock-gap-px: 16px;
+  --ui-dock-pad-x: 12px;
+  --ui-dock-pad-y: 10px;
+  /* Overridden from `main.js` when the viewport header mounts */
+  --ui-header-max-width-px: 1180px;
+  --ui-header-offset-y: 0px;
 }
 
 #app {
@@ -51,16 +76,113 @@ body {
   width: 100%;
   height: 100%;
   position: relative;
+  z-index: 2;
+}
+
+/* Viewport-locked (not 3D); `object-position: top right` keeps the graphic pinned to the top-right when sized */
+.viewport-header-banner {
+  position: fixed;
+  top: calc(max(0px, env(safe-area-inset-top)) + var(--ui-header-offset-y, 0px));
+  right: max(0px, env(safe-area-inset-right));
+  left: auto;
+  width: auto;
+  height: auto;
+  /* Fixed px cap only — no 100vw min(), or the banner shrinks on slender / narrow viewports */
+  max-width: var(--ui-header-max-width-px, 1180px);
+  max-height: none;
+  object-fit: contain;
+  object-position: top right;
+  pointer-events: none;
+  /* Above bg layers (0), below WebGL canvas and UI */
   z-index: 1;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .slide-counter {
   position: absolute;
   transform: translate(-50%, -50%);
-  z-index: 2;
+  z-index: 3;
   font-family: Arial, sans-serif;
   font-size: 1rem;
   color: #000;
   pointer-events: none;
   white-space: nowrap;
+}
+
+/* Configurable copy in `src/textOverlays.js` — @font-face injected in JS for BASE_URL */
+.text-overlays-root {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+}
+
+.text-overlays-dock--top-right {
+  position: fixed;
+  top: max(var(--ui-dock-pad-y), env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding-left: max(var(--ui-dock-pad-x), env(safe-area-inset-left));
+  padding-right: max(var(--ui-dock-pad-x), env(safe-area-inset-right));
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: var(--ui-dock-gap-px);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.text-overlays-dock--top-right .text-overlay {
+  position: static;
+  left: auto;
+  right: auto;
+  top: auto;
+  bottom: auto;
+}
+
+.text-overlay {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  font-family: 'SF Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: var(--ui-fixed-text-px, 16px);
+  line-height: 1.3;
+  white-space: nowrap;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'kern' 1;
+  text-rendering: geometricPrecision;
+}
+
+.text-overlay--static {
+  pointer-events: none;
+}
+
+.text-overlay--link {
+  pointer-events: auto;
+  text-decoration: none;
+  color: #000;
+  cursor: pointer;
+}
+
+.text-overlay--link:hover,
+.text-overlay--link:focus,
+.text-overlay--link:visited,
+.text-overlay--link:active {
+  text-decoration: none;
+  color: #000;
+}
+
+.text-overlay--link:focus-visible {
+  outline: 2px solid #000;
+  outline-offset: 2px;
 }
