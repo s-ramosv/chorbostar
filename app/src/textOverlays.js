@@ -43,8 +43,8 @@ export const TEXT_OVERLAYS_DESKTOP = [
     top: topOffset,
     fontWeight: 500,
     tracking: '-0.04em',
-    href: publicAsset('download/SamuelRV-CV-240326.pdf'),
-    download: 'Samuel-Ramos-Varela-CV.pdf',
+    href: publicAsset('download/CV03062025-2.pdf'),
+    download: 'CV03062025-2.pdf',
   },
   {
     text: 'samuel ramos varela',
@@ -86,8 +86,8 @@ export const TEXT_OVERLAYS_DESKTOP_ALT = [
     top: topOffset,
     fontWeight: 500,
     tracking: '-0.04em',
-    href: publicAsset('download/SamuelRV-CV-240326.pdf'),
-    download: 'Samuel-Ramos-Varela-CV.pdf',
+    href: publicAsset('download/CV03062025-2.pdf'),
+    download: 'CV03062025-2.pdf',
   },
   {
     text: 'samuel ramos varela',
@@ -136,8 +136,8 @@ export const TEXT_OVERLAYS_MOBILE = [
     right: 'max(240px, env(safe-area-inset-right))',
     fontWeight: 500,
     tracking: '-0.04em',
-    href: publicAsset('download/SamuelRV-CV-240326.pdf'),
-    download: 'Samuel-Ramos-Varela-CV.pdf',
+    href: publicAsset('download/CV03062025-2.pdf'),
+    download: 'CV03062025-2.pdf',
   },
 ]
 
