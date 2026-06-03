@@ -7,3 +7,22 @@
 
 [build.environment]
   NODE_VERSION = "24"
+
+# chorbostar.com/ → alt (`slides-structure-desktop-alt.json`)
+# chorbostar.com/music → original (`slides-structure.json`) — see `desktopPage.js`
+
+[[redirects]]
+  from = "/desk-alt"
+  to = "/"
+  status = 301
+
+[[redirects]]
+  from = "/alt"
+  to = "/"
+  status = 301
+
+# SPA fallback (includes `/music` and client-side paths)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

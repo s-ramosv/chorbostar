@@ -1,0 +1,634 @@
+{
+  "rootBackground": {
+    "type": "image",
+    "src": "assets/landscape.jpg"
+  },
+  "root": [
+    {
+      "name": "Experience",
+      "art": "assets/initial/prof.png",
+      "timeline": {
+        "enabled": true,
+        "followSlides": true,
+        "lineWidthPx": 20,
+        "labelFontPx": 40,
+        "labelColor": "#F7F8FA",
+        "labelFontWeight": 600,
+        "labelScale": 1,
+        "lineColor": "#F7F8FA",
+        "lineOpacity": 1,
+        "position": {
+          "x": 1,
+          "y": -2,
+          "z": 0.05
+        },
+        "labelOffset": {
+          "x": 0.36,
+          "y": -0.21,
+          "z": 0
+        },
+        "nodeRadius": 0.05,
+        "nodeRadii": [
+          0.06,
+          0.05,
+          0.04
+        ],
+        "nodeColor": "#94a3b8",
+        "labels": [
+          "Dec 2025\nto Present",
+          "Nov 2024\nDec 2025",
+          "Feb 2023\nNov 2023"
+        ]
+      },
+      "children": [
+        {
+          "name": "Multiverse Computing",
+          "art": "a",
+          "imagePanels": [
+            {
+              "src": "/assets/imagePanel/mvc.png",
+              "sizeRatio": 7,
+              "finalSizeRatio": 5,
+              "initialSizeRatio": 1,
+              "finalPosition": {
+                "x": -2,
+                "y": 0,
+                "z": -4
+              },
+              "initialPosition": {
+                "x": 0.5,
+                "y": 0.1,
+                "z": -0.5
+              },
+              "opacity": 1,
+              "stackOpacityFront": 0.2,
+              "stackOpacityInitial": 1
+            },
+            {
+              "src": "/assets/imagePanel/flare1.png",
+              "sizeRatio": 8,
+              "finalSizeRatio": 5,
+              "initialSizeRatio": 1.2,
+              "finalPosition": {
+                "x": -2.8,
+                "y": 0.7,
+                "z": -2
+              },
+              "initialPosition": {
+                "x": 0.4,
+                "y": 0.1,
+                "z": -0.5
+              },
+              "opacity": 1,
+              "stackOpacityFront": 1,
+              "stackOpacityInitial": 0.2
+            },
+            {
+              "src": "/assets/imagePanel/flare2.png",
+              "sizeRatio": 8,
+              "cropPx": 8,
+              "finalSizeRatio": 2.7,
+              "initialSizeRatio": 1.2,
+              "finalPosition": {
+                "x": -0.6,
+                "y": 0.8,
+                "z": 0.6
+              },
+              "initialPosition": {
+                "x": 1,
+                "y": -1,
+                "z": 0.7
+              },
+              "opacity": 1,
+              "stackOpacityFront": 0.8,
+              "stackOpacityInitial": 0.2
+            }
+          ],
+          "textPanels": [
+            {
+              "widthRatio": 0.9,
+              "textSpanRatio": 1,
+              "paragraphGapPx": 40,
+              "lineHeight": 1.3,
+              "stackOpacityFront": 1,
+              "stackOpacityInitial": 0,
+              "paragraphs": [
+                {
+                  "text": "Designing and developing quantum-inspired compression, healing and evaluation pipelines for LLMs and VLMs.",
+                  "align": "left",
+                  "spanRatio": 1
+                },
+                {
+                  "text": "Driving key ML initiatives from fundamental research to client-ready delivery as a Technical Lead and Project Owner.",
+                  "align": "left"
+                },
+                {
+                  "text": "Solving high-value, open-ended research problems for Fortune-500 clients within a deep-tech startup environment.",
+                  "align": "left"
+                },
+                {
+                  "text": "Scaling distributed ML experimentation and benchmarking workloads across AWS and and HPCs (MN5 Supercomputer).",
+                  "align": "left"
+                }
+              ],
+              "fontSizePx": 50,
+              "fontWeight": 400,
+              "textColor": "#0D1117",
+              "boxColor": "#FAF9F6",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": 0,
+              "highlightPaddingYPx": 0,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 1.6,
+              "zOffset": 0.42,
+              "finalPosition": {
+                "x": 0.25321959615772605,
+                "y": -0.14260999036724298,
+                "z": 0.42
+              },
+              "initialPosition": {
+                "x": 0.25321959615772605,
+                "y": -0.14260999036724298,
+                "z": 0.42
+              }
+            },
+            {
+              "widthRatio": 1.4999999999999998,
+              "textureDprScale": 1.5,
+              "textSpanRatio": 1,
+              "paragraphGapPx": -40,
+              "lineHeight": 1.28,
+              "paragraphs": [
+                {
+                  "text": "MULTIVERSE",
+                  "align": "right"
+                },
+                {
+                  "text": "COMPUTING",
+                  "align": "right"
+                }
+              ],
+              "fontSizePx": 100,
+              "fontWeight": 400,
+              "textColor": "#F7F8FA",
+              "boxColor": "#f01438",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": -7,
+              "highlightPaddingYPx": -58,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 1.5,
+              "zOffset": 0.6,
+              "finalPosition": {
+                "x": -0.5148849999999999,
+                "y": 0.2794500000000002,
+                "z": 0.6
+              },
+              "initialPosition": {
+                "x": -0.5148849999999999,
+                "y": 0.2794500000000002,
+                "z": 0.6
+              }
+            },
+            {
+              "widthRatio": 1.4999999999999998,
+              "textureDprScale": 1.5,
+              "textSpanRatio": 1,
+              "paragraphGapPx": 0,
+              "lineHeight": 1.28,
+              "paragraphs": [
+                {
+                  "text": "Machine Learning",
+                  "align": "right"
+                },
+                {
+                  "text": "Engineer",
+                  "align": "right"
+                }
+              ],
+              "fontSizePx": 50,
+              "fontWeight": 400,
+              "textColor": "#F7F8FA",
+              "boxColor": "#f01438",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": 0,
+              "highlightPaddingYPx": -15,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 1.5,
+              "zOffset": 0.8,
+              "finalPosition": {
+                "x": -0.06113910730825542,
+                "y": -1.8869061666171394,
+                "z": 0.8
+              },
+              "initialPosition": {
+                "x": -0.06113910730825542,
+                "y": -1.8869061666171394,
+                "z": 0.8
+              }
+            }
+          ],
+          "children": [],
+          "link": "https://multiversecomputing.com",
+          "background": {
+            "type": "custom"
+          }
+        },
+        {
+          "name": "Astound",
+          "art": "/a",
+          "imagePanels": [
+            {
+              "src": "/assets/imagePanel/astound.png",
+              "sizeRatio": 5,
+              "finalSizeRatio": 5,
+              "initialSizeRatio": 1,
+              "finalPosition": {
+                "x": -2,
+                "y": 0,
+                "z": -4
+              },
+              "initialPosition": {
+                "x": 0.4,
+                "y": 0.1,
+                "z": -0.5
+              },
+              "opacity": 1,
+              "stackOpacityFront": 0.2,
+              "stackOpacityInitial": 1
+            },
+            {
+              "src": "/assets/imagePanel/flare1.png",
+              "sizeRatio": 5,
+              "finalSizeRatio": 5,
+              "initialSizeRatio": 1.2,
+              "finalPosition": {
+                "x": -2.8,
+                "y": 0.7,
+                "z": -2
+              },
+              "initialPosition": {
+                "x": 0.4,
+                "y": 0.1,
+                "z": -0.5
+              },
+              "opacity": 1,
+              "stackOpacityFront": 1,
+              "stackOpacityInitial": 0
+            },
+            {
+              "src": "/assets/imagePanel/flare2.png",
+              "sizeRatio": 2.7,
+              "cropPx": 8,
+              "finalSizeRatio": 2.7,
+              "initialSizeRatio": 1.2,
+              "finalPosition": {
+                "x": -0.6,
+                "y": 0.8,
+                "z": 0.6
+              },
+              "initialPosition": {
+                "x": 1,
+                "y": -1,
+                "z": 0.7
+              },
+              "opacity": 1,
+              "stackOpacityFront": 0.8,
+              "stackOpacityInitial": 0
+            }
+          ],
+          "textPanels": [
+            {
+              "widthRatio": 1,
+              "textSpanRatio": 1,
+              "paragraphGapPx": 70,
+              "stackTextOffsetXRatio": -0.12,
+              "lineHeight": 1.3,
+              "enabled": true,
+              "stackOpacityFront": 1,
+              "stackOpacityInitial": 0,
+              "paragraphs": [
+                {
+                  "text": "Fine-tuned multimodal LLMs for RAG, QA, and contextual reasoning, leveraging AWS and Azure services",
+                  "align": "left"
+                },
+                {
+                  "text": "Developed agentic AI orchestration pipelines with LangGraph, CrewAI, VLLM, and MCP",
+                  "align": "left"
+                },
+                {
+                  "text": "Led a multidisciplinary team of researchers and engineers contributing to the ASTOUND EC project within the GTHAU group",
+                  "align": "left"
+                }
+              ],
+              "fontSizePx": 30,
+              "fontWeight": 400,
+              "textColor": "#0D1117",
+              "boxColor": "#FAF9F6",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": 0,
+              "highlightPaddingYPx": 0,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 1.6,
+              "zOffset": 0.1881710244538664,
+              "finalPosition": {
+                "x": 0.17234252196634736,
+                "y": -0.2709514994446246,
+                "z": 0.1881710244538664
+              },
+              "initialPosition": {
+                "x": 0.17234252196634736,
+                "y": -0.2709514994446246,
+                "z": 0.1881710244538664
+              }
+            },
+            {
+              "widthRatio": 0.8863208875782709,
+              "textureDprScale": 1.5,
+              "textSpanRatio": 1,
+              "paragraphGapPx": -35,
+              "stackTextOffsetXRatio": -1,
+              "lineHeight": 1.28,
+              "paragraphs": [
+                {
+                  "text": "ASTOUND",
+                  "align": "left"
+                },
+                {
+                  "text": "UPM",
+                  "align": "left"
+                }
+              ],
+              "fontSizePx": 175,
+              "fontWeight": 450,
+              "textColor": "#F7F8FA",
+              "boxColor": "#4fd3ff",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": -10,
+              "highlightPaddingYPx": -55,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 0.6284965454438237,
+              "zOffset": 0.6,
+              "finalPosition": {
+                "x": 0.1,
+                "y": -0.17747001315468955,
+                "z": 0.6
+              },
+              "initialPosition": {
+                "x": 0.1,
+                "y": -0.17747001315468955,
+                "z": 0.6
+              }
+            },
+            {
+              "widthRatio": 1.4999999999999998,
+              "textureDprScale": 1.5,
+              "textSpanRatio": 1,
+              "paragraphGapPx": 0,
+              "stackTextOffsetXRatio": -1,
+              "lineHeight": 1.28,
+              "paragraphs": [
+                {
+                  "text": "Machine Learning",
+                  "align": "right"
+                },
+                {
+                  "text": "Engineer",
+                  "align": "right"
+                }
+              ],
+              "fontSizePx": 50,
+              "fontWeight": 400,
+              "textColor": "#F7F8FA",
+              "boxColor": "#4fd3ff",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": 0,
+              "highlightPaddingYPx": -15,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 1.5,
+              "zOffset": 0.8,
+              "finalPosition": {
+                "x": -0.06113910730825542,
+                "y": -1.8869061666171394,
+                "z": 0.8
+              },
+              "initialPosition": {
+                "x": -0.06113910730825542,
+                "y": -1.8869061666171394,
+                "z": 0.8
+              }
+            }
+          ],
+          "children": [],
+          "link": "https://www.linkedin.com/company/astound-ai/",
+          "background": {
+            "type": "custom"
+          }
+        },
+        {
+          "name": "Link three",
+          "art": "/a",
+          "imagePanels": [
+            {
+              "src": "/assets/imagePanel/itg.png",
+              "sizeRatio": 5,
+              "finalSizeRatio": 5,
+              "initialSizeRatio": 1.4,
+              "finalPosition": {
+                "x": -2,
+                "y": 0,
+                "z": -4
+              },
+              "initialPosition": {
+                "x": 0.8,
+                "y": 0.1,
+                "z": -0.5
+              },
+              "opacity": 1,
+              "stackOpacityFront": 0.2,
+              "stackOpacityInitial": 1
+            },
+            {
+              "src": "/assets/imagePanel/flare1.png",
+              "sizeRatio": 5,
+              "finalSizeRatio": 5,
+              "initialSizeRatio": 1.2,
+              "finalPosition": {
+                "x": -2.8,
+                "y": 0.7,
+                "z": -2
+              },
+              "initialPosition": {
+                "x": 0.2,
+                "y": 0.1,
+                "z": -0.5
+              },
+              "opacity": 1,
+              "stackOpacityFront": 1,
+              "stackOpacityInitial": 0
+            },
+            {
+              "src": "/assets/imagePanel/flare2.png",
+              "sizeRatio": 2.7,
+              "cropPx": 8,
+              "finalSizeRatio": 2.7,
+              "initialSizeRatio": 1.2,
+              "finalPosition": {
+                "x": -0.6,
+                "y": 0.8,
+                "z": 0.6
+              },
+              "initialPosition": {
+                "x": 1,
+                "y": -1,
+                "z": 0.7
+              },
+              "opacity": 1,
+              "stackOpacityFront": 0.8,
+              "stackOpacityInitial": 0
+            }
+          ],
+          "textPanels": [
+            {
+              "widthRatio": 1,
+              "textSpanRatio": 1,
+              "paragraphGapPx": 70,
+              "stackTextOffsetXRatio": -0.12,
+              "lineHeight": 1.3,
+              "stackOpacityFront": 1,
+              "stackOpacityInitial": 0,
+              "paragraphs": [
+                {
+                  "text": "Engineered an NLP contextualisation toolkit built on Transformer models, providing reusable components for intent detection, entity linking and semantic enrichment.",
+                  "align": "left"
+                },
+                {
+                  "text": "Built computer-vision pipelines (detection, segmentation) for industrial inspection.",
+                  "align": "left"
+                }
+              ],
+              "fontSizePx": 30,
+              "fontWeight": 400,
+              "textColor": "#0D1117",
+              "boxColor": "#FAF9F6",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": 0,
+              "highlightPaddingYPx": 0,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 1.6,
+              "zOffset": 0.1881710244538664,
+              "finalPosition": {
+                "x": 0.17234252196634736,
+                "y": -0.2709514994446246,
+                "z": 0.1881710244538664
+              },
+              "initialPosition": {
+                "x": 0.17234252196634736,
+                "y": -0.2709514994446246,
+                "z": 0.1881710244538664
+              }
+            },
+            {
+              "widthRatio": 2.281781957172079,
+              "textureDprScale": 1.5,
+              "textSpanRatio": 1,
+              "paragraphGapPx": -40,
+              "stackTextOffsetXRatio": -1,
+              "lineHeight": 1.28,
+              "paragraphs": [
+                {
+                  "text": "ITG",
+                  "align": "left"
+                }
+              ],
+              "fontSizePx": 100,
+              "fontWeight": 450,
+              "textColor": "#F7F8FA",
+              "boxColor": "#0000cc",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": 0,
+              "highlightPaddingYPx": -40,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 0.7759848311429992,
+              "zOffset": 0.6,
+              "finalPosition": {
+                "x": 1.9749260040623677,
+                "y": -2.2246189991397776,
+                "z": 0.6
+              },
+              "initialPosition": {
+                "x": 1.9749260040623677,
+                "y": -2.2246189991397776,
+                "z": 0.6
+              }
+            },
+            {
+              "widthRatio": 1.4999999999999998,
+              "textureDprScale": 1.5,
+              "textSpanRatio": 1,
+              "paragraphGapPx": 0,
+              "stackTextOffsetXRatio": -1,
+              "lineHeight": 1.28,
+              "paragraphs": [
+                {
+                  "text": "Machine Learning",
+                  "align": "right"
+                },
+                {
+                  "text": "Engineer",
+                  "align": "right"
+                }
+              ],
+              "fontSizePx": 50,
+              "fontWeight": 400,
+              "textColor": "#F7F8FA",
+              "boxColor": "#0000cc",
+              "boxOpacity": 1,
+              "backgroundMode": "highlight",
+              "highlightPaddingXPx": 0,
+              "highlightPaddingYPx": -15,
+              "highlightRadiusPx": 0,
+              "aspectRatio": 1.5,
+              "zOffset": 0.8,
+              "finalPosition": {
+                "x": -0.06113910730825542,
+                "y": -1.8869061666171394,
+                "z": 0.8
+              },
+              "initialPosition": {
+                "x": -0.06113910730825542,
+                "y": -1.8869061666171394,
+                "z": 0.8
+              }
+            }
+          ],
+          "children": [],
+          "link": "https://itg.es",
+          "background": {
+            "type": "custom"
+          }
+        }
+      ],
+      "background": {
+        "type": "image",
+        "src": "/assets/landscape.jpg"
+      }
+    },
+    {
+      "name": "Research & Publications",
+      "art": "assets/initial/publications-2.png",
+      "children": [],
+      "link": "https://scholar.google.es/citations?user=qJpBQDQAAAAJ&hl=es&oi=ao",
+      "background": {
+        "type": "custom"
+      }
+    }
+  ]
+}

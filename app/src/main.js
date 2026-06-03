@@ -13,19 +13,52 @@ function createNeutralEnvMap(renderer) {
 }
 import { loadGltfModel } from './gltfModel.js'
 import { getSceneObjectConfigsForProfile, applySceneObjectBehaviour } from './sceneObjects.js'
-import slidesStructure from './slides-structure.json'
-import { mountTextOverlays, TEXT_OVERLAYS_DESKTOP, TEXT_OVERLAYS_MOBILE } from './textOverlays.js'
+import {
+  mountTextOverlays,
+  TEXT_OVERLAYS_MOBILE,
+  getDesktopTextOverlaysForPage,
+  TEXT_OVERLAY_FONT_FAMILY,
+} from './textOverlays.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { resolveLayoutProfile } from './layoutProfile.js'
 import { getSitIdleCharacterConfig } from './sitIdleCharacterConfig.js'
+import {
+  resolveDesktopPageId,
+  getSlidesStructureForPage,
+  getDesktopLayoutPatch,
+  mergeDesktopLayoutPatch,
+  getDesktopFrontSlideHoverTiltPatch,
+} from './desktopPage.js'
+import { isTextPanelVisualEditActive } from './devFlags.js'
+import {
+  applyTextPanelOverridesToSlideTree,
+  buildTextPanelStorageKey,
+} from './devTextPanelStorage.js'
+import { buildSlideTimeline, updateSlideTimeline } from './slideTimeline.js'
 
 const layoutProfile = resolveLayoutProfile()
-const sceneObjectConfigs = getSceneObjectConfigsForProfile(layoutProfile.id)
-const sitIdleCharacter = getSitIdleCharacterConfig(layoutProfile.id)
+const desktopPageId = resolveDesktopPageId(layoutProfile.id)
+const slidesStructure = getSlidesStructureForPage(layoutProfile.id, desktopPageId)
+const effectiveLayout = mergeDesktopLayoutPatch(layoutProfile, getDesktopLayoutPatch(desktopPageId))
+const sceneObjectConfigs = getSceneObjectConfigsForProfile(layoutProfile.id, desktopPageId)
+const sitIdleCharacter = getSitIdleCharacterConfig(layoutProfile.id, desktopPageId)
+const DEFAULT_FRONT_SLIDE_HOVER_TILT = Object.freeze({
+  enabled: true,
+  maxX: 0.05,
+  maxY: 0.05,
+  smooth: 8,
+})
+const frontSlideHoverTilt = {
+  ...DEFAULT_FRONT_SLIDE_HOVER_TILT,
+  ...(getDesktopFrontSlideHoverTiltPatch(desktopPageId) ?? {}),
+}
 
 // Scene (no solid background so the background video shows through)
 const scene = new THREE.Scene()
 scene.background = null
+const slideTimelineGroup = new THREE.Group()
+slideTimelineGroup.name = 'slide-timeline'
+scene.add(slideTimelineGroup)
 
 // Overlay scene: rendered after main scene so its contents (e.g. GLTF model) draw on top
 const overlayScene = new THREE.Scene()
@@ -46,17 +79,17 @@ overlayLeftFront.target.position.set(-0.5, -2, -2.5)
 overlayScene.add(overlayLeftFront)
 overlayScene.add(overlayLeftFront.target)
 
-// Camera (FOV / position from layout profile — desktop matches previous defaults)
+// Camera (FOV / position from layout profile; desktop alt page can patch via `desktopPage.js`)
 const camera = new THREE.PerspectiveCamera(
-  layoutProfile.camera.fov,
+  effectiveLayout.camera.fov,
   window.innerWidth / window.innerHeight,
   0.1,
   1000
 )
 camera.position.set(
-  layoutProfile.camera.position.x,
-  layoutProfile.camera.position.y,
-  layoutProfile.camera.position.z
+  effectiveLayout.camera.position.x,
+  effectiveLayout.camera.position.y,
+  effectiveLayout.camera.position.z
 )
 
 /** Subtle view tilt from pointer position (whole window), typical Three.js “mouse parallax”. */
@@ -110,6 +143,10 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
 renderer.setClearColor(0x000000, 0)
 container.appendChild(renderer.domElement)
 container.setAttribute('data-layout-profile', layoutProfile.id)
+if (layoutProfile.id === 'desktop') {
+  container.setAttribute('data-desktop-page', desktopPageId)
+  document.title = desktopPageId === 'alt' ? 'chorbostar' : 'chorbostar — music'
+}
 
 // Background layer elements (video, image, or custom per config)
 const bgVideo = document.getElementById('bg-video')
@@ -172,7 +209,8 @@ if (hb) {
 
 mountTextOverlays(container, {
   viewportTextPx: VIEWPORT_UI_TEXT_PX,
-  overlays: layoutProfile.id === 'mobile' ? TEXT_OVERLAYS_MOBILE : TEXT_OVERLAYS_DESKTOP,
+  overlays:
+    layoutProfile.id === 'mobile' ? TEXT_OVERLAYS_MOBILE : getDesktopTextOverlaysForPage(desktopPageId),
 })
 
 {
@@ -487,20 +525,9 @@ if (sitIdleCharacter.enabled) {
         group.animations.forEach((clip) => mixer.clipAction(clip).play())
         animationMixers.push(mixer)
       }
-      const video = document.createElement('video')
-      video.src = SIT_IDLE_BASE + encodeURI(sitIdleCharacter.videoFile)
-      video.loop = true
-      video.muted = true
-      video.playsInline = true
-      video.play().catch((e) => console.warn('Sit-idle video texture autoplay:', e))
-      const videoTex = new THREE.VideoTexture(video)
-      videoTex.colorSpace = THREE.SRGBColorSpace
-      videoTex.minFilter = THREE.LinearFilter
-      videoTex.magFilter = THREE.LinearFilter
-      videoTex.wrapS = videoTex.wrapT = THREE.ClampToEdgeWrapping
-      videoTex.repeat.set(mirrorTextureX, 1)
-      videoTex.offset.set(mirrorTextureX === -1 ? 1 : 0, 0)
-      sitIdleVideoTexture = videoTex
+
+      const appearance = sitIdleCharacter.appearance ?? 'video'
+      const useWhiteAppearance = appearance === 'white'
       const texLoader = new THREE.TextureLoader().setPath(SIT_IDLE_BASE)
       const normalTex = texLoader.load(
         encodeURI(sitIdleCharacter.normalMapFile),
@@ -508,12 +535,69 @@ if (sitIdleCharacter.enabled) {
         undefined,
         (e) => console.warn('Sit-idle normal texture failed', e)
       )
+
+      /** @type {THREE.Texture | null} */
+      let diffuseMap = null
+      if (useWhiteAppearance) {
+        if (sitIdleCharacter.colorMapFile) {
+          diffuseMap = texLoader.load(
+            encodeURI(sitIdleCharacter.colorMapFile),
+            undefined,
+            undefined,
+            (e) => console.warn('Sit-idle color map failed', e)
+          )
+          diffuseMap.colorSpace = THREE.SRGBColorSpace
+          diffuseMap.wrapS = diffuseMap.wrapT = THREE.ClampToEdgeWrapping
+          diffuseMap.repeat.set(mirrorTextureX, 1)
+          diffuseMap.offset.set(mirrorTextureX === -1 ? 1 : 0, 0)
+        }
+      } else {
+        const video = document.createElement('video')
+        video.src = SIT_IDLE_BASE + encodeURI(sitIdleCharacter.videoFile)
+        video.loop = true
+        video.muted = true
+        video.playsInline = true
+        video.play().catch((e) => console.warn('Sit-idle video texture autoplay:', e))
+        const videoTex = new THREE.VideoTexture(video)
+        videoTex.colorSpace = THREE.SRGBColorSpace
+        videoTex.minFilter = THREE.LinearFilter
+        videoTex.magFilter = THREE.LinearFilter
+        videoTex.wrapS = videoTex.wrapT = THREE.ClampToEdgeWrapping
+        videoTex.repeat.set(mirrorTextureX, 1)
+        videoTex.offset.set(mirrorTextureX === -1 ? 1 : 0, 0)
+        sitIdleVideoTexture = videoTex
+        diffuseMap = videoTex
+      }
+
+      const whiteColor = sitIdleCharacter.materialColor ?? 0xffffff
+      const whiteEmissive = sitIdleCharacter.emissive ?? 0x000000
+      const whiteEmissiveIntensity = sitIdleCharacter.emissiveIntensity ?? 0
+      const whiteRoughness = sitIdleCharacter.roughness ?? 0.06
+      const whiteMetalness = sitIdleCharacter.metalness ?? 0
+      const whiteNormalScale = sitIdleCharacter.normalScale ?? 1
+      const whiteEnvMapIntensity = sitIdleCharacter.envMapIntensity ?? 1.45
+      const idleEnvMap = idleHostScene.environment ?? null
+
       group.traverse((child) => {
         if (!child.isMesh || !child.material) return
         const materials = Array.isArray(child.material) ? child.material : [child.material]
         const newMats = materials.map((mat) => {
+          if (useWhiteAppearance) {
+            return new THREE.MeshStandardMaterial({
+              map: diffuseMap,
+              normalMap: normalTex,
+              normalScale: new THREE.Vector2(whiteNormalScale, whiteNormalScale),
+              color: whiteColor,
+              emissive: whiteEmissive,
+              emissiveIntensity: whiteEmissiveIntensity,
+              roughness: whiteRoughness,
+              metalness: whiteMetalness,
+              envMap: idleEnvMap,
+              envMapIntensity: whiteEnvMapIntensity,
+            })
+          }
           return new THREE.MeshStandardMaterial({
-            map: videoTex,
+            map: diffuseMap,
             normalMap: normalTex,
             color: mat.color ? mat.color.clone() : 0xffffff,
             roughness: 0.0,
@@ -522,25 +606,29 @@ if (sitIdleCharacter.enabled) {
         })
         child.material = newMats.length === 1 ? newMats[0] : newMats
       })
-      wrapper.updateMatrixWorld(true)
-      const projBox = new THREE.Box3().setFromObject(group)
-      const projSize = new THREE.Vector3()
-      projBox.getSize(projSize)
-      const dx = Math.max(projSize.x, 1e-5)
-      const dy = Math.max(projSize.y, 1e-5)
-      const _worldPos = new THREE.Vector3()
-      group.traverse((child) => {
-        if (!child.isMesh || !child.geometry?.attributes?.position) return
-        const geo = child.geometry
-        const pos = geo.attributes.position
-        const uvs = new Float32Array(pos.count * 2)
-        for (let i = 0; i < pos.count; i++) {
-          _worldPos.fromBufferAttribute(pos, i).applyMatrix4(child.matrixWorld)
-          uvs[i * 2] = (_worldPos.x - projBox.min.x) / dx
-          uvs[i * 2 + 1] = (_worldPos.y - projBox.min.y) / dy
-        }
-        geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-      })
+
+      // World-space UV projection is for video only; it smears static images on white mode.
+      if (diffuseMap && !useWhiteAppearance) {
+        wrapper.updateMatrixWorld(true)
+        const projBox = new THREE.Box3().setFromObject(group)
+        const projSize = new THREE.Vector3()
+        projBox.getSize(projSize)
+        const dx = Math.max(projSize.x, 1e-5)
+        const dy = Math.max(projSize.y, 1e-5)
+        const _worldPos = new THREE.Vector3()
+        group.traverse((child) => {
+          if (!child.isMesh || !child.geometry?.attributes?.position) return
+          const geo = child.geometry
+          const pos = geo.attributes.position
+          const uvs = new Float32Array(pos.count * 2)
+          for (let i = 0; i < pos.count; i++) {
+            _worldPos.fromBufferAttribute(pos, i).applyMatrix4(child.matrixWorld)
+            uvs[i * 2] = (_worldPos.x - projBox.min.x) / dx
+            uvs[i * 2 + 1] = (_worldPos.y - projBox.min.y) / dy
+          }
+          geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+        })
+      }
     },
     undefined,
     (err) => console.error('FBX load failed:', err)
@@ -549,6 +637,9 @@ if (sitIdleCharacter.enabled) {
 
 // Tree from config (single source of truth)
 const ROOT_GROUP = slidesStructure.root
+if (import.meta.env.DEV) {
+  applyTextPanelOverridesToSlideTree(ROOT_GROUP, layoutProfile.id, desktopPageId)
+}
 
 function getChildren(node) {
   return node?.children ?? []
@@ -578,11 +669,11 @@ function currentGroup() {
   return currentPage().group
 }
 
-// Stack curve: mutable copy of `layoutProfile.stack` (tune in layoutProfile.js per desktop/mobile).
+// Stack curve: mutable copy of effective layout stack (desktop alt patches in `desktopPage.js`).
 const stackLayout = {
-  ...layoutProfile.stack,
-  curveStart: { ...layoutProfile.stack.curveStart },
-  curveEnd: { ...layoutProfile.stack.curveEnd },
+  ...effectiveLayout.stack,
+  curveStart: { ...effectiveLayout.stack.curveStart },
+  curveEnd: { ...effectiveLayout.stack.curveEnd },
 }
 
 let CARD_WIDTH = 1.4 * 1.5 * stackLayout.scale
@@ -701,13 +792,13 @@ function getSlideOffFrameRotationBlend() {
 }
 
 /** Pointer-driven tilt on the front slide only (adds on top of stack / off-frame yaw). */
-const FRONT_SLIDE_HOVER_TILT_ENABLED = true
+const FRONT_SLIDE_HOVER_TILT_ENABLED = frontSlideHoverTilt.enabled
 /** Max pitch (rotation.x, rad) from pointer top vs bottom on the card. */
-const FRONT_SLIDE_HOVER_TILT_MAX_X = 0.05
+const FRONT_SLIDE_HOVER_TILT_MAX_X = frontSlideHoverTilt.maxX
 /** Max extra yaw (rotation.y, rad) from pointer left vs right on the card. */
-const FRONT_SLIDE_HOVER_TILT_MAX_Y = 0.05
+const FRONT_SLIDE_HOVER_TILT_MAX_Y = frontSlideHoverTilt.maxY
 /** How fast hover tilt follows the pointer (1/s). */
-const FRONT_SLIDE_HOVER_TILT_SMOOTH = 8
+const FRONT_SLIDE_HOVER_TILT_SMOOTH = frontSlideHoverTilt.smooth
 
 /** Front slide: scale + world offset on hover (separate from deeper slides). */
 const FRONT_SLIDE_HOVER_POP_ENABLED = true
@@ -1146,6 +1237,8 @@ function createFullArtPlaneGeometry(innerWidth, innerHeight) {
 const textureLoader = new THREE.TextureLoader()
 /** Cache of loaded art textures by URL so go-back etc. can show art immediately during animations. */
 const artTextureCache = new Map()
+/** Cache of loaded slide image-panel textures by URL. */
+const slideImagePanelTextureCache = new Map()
 
 function preloadGroupArt(group) {
   if (!group) return
@@ -1179,6 +1272,1118 @@ function makeLabelTexture(parentIndex, index) {
   return tex
 }
 
+const DEFAULT_SLIDE_TEXT_PANEL = Object.freeze({
+  enabled: true,
+  // Width/height of the panel plane.
+  aspectRatio: 1.45,
+  // Fraction of inner slide width used by the panel.
+  widthRatio: 0.72,
+  // Draw slightly closer to camera than slide art for subtle parallax.
+  zOffset: 0.03,
+  // 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center'
+  anchor: 'top-left',
+  marginXRatio: 0.08,
+  marginYRatio: 0.08,
+  // Text rendering options.
+  fontFamily: TEXT_OVERLAY_FONT_FAMILY,
+  fontWeight: 520,
+  fontSizePx: 42,
+  minFontSizePx: 20,
+  autoFit: true,
+  lineHeight: 1.3,
+  paragraphGapPx: 18,
+  textAlign: 'left',
+  verticalAlign: 'top',
+  textColor: '#ffffff',
+  // Width of the text column inside panel (0..1 of available width).
+  textSpanRatio: 1,
+  // Horizontal offset for the full panel (ratio of inner slide width).
+  offsetXRatio: 0,
+  // Vertical offset for the full panel (ratio of inner slide height).
+  offsetYRatio: 0,
+  // Background styling:
+  // - 'highlight' = per-line highlight behind text (default)
+  // - 'panel' = one rounded rectangle behind the full panel area
+  // - 'none' = no background fill
+  backgroundMode: 'highlight',
+  boxColor: '#111111',
+  boxOpacity: 0.72,
+  borderColor: '#ffffff',
+  borderOpacity: 0,
+  borderWidthPx: 0,
+  radiusPx: 24,
+  highlightPaddingXPx: 12,
+  highlightPaddingYPx: 7,
+  highlightRadiusPx: 8,
+  // Inner spacing.
+  paddingXRatio: 0.08,
+  paddingYRatio: 0.11,
+  // Texture quality budget.
+  textureWidthPx: 1024,
+  // Multiplier on top of device pixel ratio for crisper text rendering.
+  textureDprScale: 1,
+  // When > 0, non–front-in-stack slides shift text in +X (world card space) by `innerWidth * ratio * w`,
+  // where w = min(1, max(0, i - gltfSlideIndex)) so the offset eases to 0 as the transition brings the
+  // card to the front (see `getStackTextOffsetWeightForCardIndex` / `updateSlideTextPanelStackVisuals`).
+  stackTextOffsetXRatio: 0,
+  // With fractional `gltfSlideIndex`, text opacity eases between these: front (w=0) vs behind (w=1).
+  stackOpacityFront: 1,
+  stackOpacityInitial: 1,
+  // Optional, like image panels: at the fractional front (w→0) use `position`/`finalPosition` and
+  // `finalSizeRatio`; when |index − gltfSlideIndex| → 1, lerp toward `initialPosition` / `initialSizeRatio`.
+  finalPosition: null,
+  initialPosition: null,
+})
+
+const DEFAULT_SLIDE_IMAGE_PANEL = Object.freeze({
+  enabled: true,
+  src: '',
+  // Single-size mode (preferred): scales from inner slide width; height follows image aspect (no stretching).
+  sizeRatio: null,
+  // Fraction of inner slide width/height; values > 1 allow spanning beyond card bounds.
+  // Legacy fallback when `sizeRatio` is not set.
+  widthRatio: 1,
+  heightRatio: 1,
+  // Fallback aspect used before image load when `sizeRatio` is set.
+  aspectRatio: 1,
+  // Crop in source pixels: uniform `cropPx` or per-side. Applied via map offset/repeat (keeps true aspect).
+  cropPx: 0,
+  // Optional overrides (if omitted, `cropPx` is used for that side).
+  cropLeftPx: null,
+  cropRightPx: null,
+  cropTopPx: null,
+  cropBottomPx: null,
+  // 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center'
+  anchor: 'center',
+  marginXRatio: 0,
+  marginYRatio: 0,
+  offsetXRatio: 0,
+  offsetYRatio: 0,
+  zOffset: 0.05,
+  // Base multiplier (applies at all stack depths).
+  opacity: 1,
+  // Stack blend multipliers (front = w0, initial/behind = w1).
+  stackOpacityFront: 1,
+  stackOpacityInitial: 1,
+  // Stack transforms (lerped by |cardIndex − gltfSlideIndex|, capped at 1): w=0 → final*, w=1 → initial*.
+  finalPosition: null,
+  initialPosition: null,
+  finalSizeRatio: null,
+  initialSizeRatio: null,
+})
+
+function clamp01(v) {
+  return THREE.MathUtils.clamp(v ?? 0, 0, 1)
+}
+
+function hexToRgba(hex, alpha = 1) {
+  const a = THREE.MathUtils.clamp(alpha, 0, 1)
+  const raw = String(hex ?? '')
+    .trim()
+    .replace(/[\u201c\u201d\u2018\u2019]/g, '') // smart quotes from copy-paste
+  const c = new THREE.Color()
+  try {
+    if (raw) c.setStyle(raw)
+    else c.set(0x000000)
+  } catch {
+    c.set(0x000000)
+  }
+  if (!Number.isFinite(c.r) || !Number.isFinite(c.g) || !Number.isFinite(c.b)) c.set(0x000000)
+  const r = Math.round(c.r * 255)
+  const g = Math.round(c.g * 255)
+  const b = Math.round(c.b * 255)
+  return `rgba(${r}, ${g}, ${b}, ${a})`
+}
+
+function roundedRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(Math.max(r, 0), w * 0.5, h * 0.5)
+  ctx.beginPath()
+  ctx.moveTo(x + rr, y)
+  ctx.lineTo(x + w - rr, y)
+  ctx.arcTo(x + w, y, x + w, y + rr, rr)
+  ctx.lineTo(x + w, y + h - rr)
+  ctx.arcTo(x + w, y + h, x + w - rr, y + h, rr)
+  ctx.lineTo(x + rr, y + h)
+  ctx.arcTo(x, y + h, x, y + h - rr, rr)
+  ctx.lineTo(x, y + rr)
+  ctx.arcTo(x, y, x + rr, y, rr)
+  ctx.closePath()
+}
+
+function wrapTextLine(ctx, text, maxWidth) {
+  const trimmed = String(text ?? '').trim()
+  if (!trimmed) return ['']
+  const words = trimmed.split(/\s+/)
+  const lines = []
+  let current = ''
+  const pushWordChunks = (word) => {
+    if (ctx.measureText(word).width <= maxWidth) return [word]
+    const chunks = []
+    let rest = word
+    while (rest.length) {
+      let lo = 1
+      let hi = rest.length
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2)
+        const probe = rest.slice(0, mid)
+        if (ctx.measureText(probe).width <= maxWidth) lo = mid + 1
+        else hi = mid - 1
+      }
+      const take = Math.max(1, hi)
+      chunks.push(rest.slice(0, take))
+      rest = rest.slice(take)
+    }
+    return chunks
+  }
+
+  for (const word of words) {
+    const chunks = pushWordChunks(word)
+    for (const chunk of chunks) {
+      const next = current ? `${current} ${chunk}` : chunk
+      if (!current || ctx.measureText(next).width <= maxWidth) {
+        current = next
+      } else {
+        lines.push(current)
+        current = chunk
+      }
+    }
+  }
+  if (current) lines.push(current)
+  return lines.length ? lines : ['']
+}
+
+function buildParagraphLines(ctx, paragraphs, maxWidth) {
+  const lines = []
+  const gaps = []
+  paragraphs.forEach((paragraph, pIdx) => {
+    const paraText = typeof paragraph === 'string' ? paragraph : paragraph?.text
+    const paraAlign = typeof paragraph === 'string' ? undefined : paragraph?.align
+    const paraSpanRatio = typeof paragraph === 'string' ? undefined : paragraph?.spanRatio
+    const spanRatio = THREE.MathUtils.clamp(
+      Number(paraSpanRatio) || 1,
+      0.15,
+      1
+    )
+    const paraMaxWidth = Math.max(1, maxWidth * spanRatio)
+    const rawLines = String(paraText ?? '').split('\n')
+    rawLines.forEach((raw) => {
+      wrapTextLine(ctx, raw, paraMaxWidth).forEach((line) =>
+        lines.push({ text: line, align: paraAlign, spanRatio })
+      )
+    })
+    if (pIdx < paragraphs.length - 1) gaps.push(lines.length)
+  })
+  return { lines, gaps }
+}
+
+function computeTextBlockHeight(lines, gaps, lineHeightPx, paragraphGapPx) {
+  return lines.length * lineHeightPx + gaps.length * paragraphGapPx
+}
+
+function normalizeSlideTextPanelConfig(rawPanel, nodeName) {
+  if (!rawPanel || rawPanel.enabled === false) return null
+  const merged = { ...DEFAULT_SLIDE_TEXT_PANEL, ...rawPanel }
+  const paragraphs = []
+  if (Array.isArray(merged.paragraphs)) {
+    for (const p of merged.paragraphs) {
+      if (typeof p === 'string') {
+        if (p.trim().length > 0) {
+          paragraphs.push({
+            text: p,
+            align: merged.textAlign,
+            spanRatio: merged.textSpanRatio,
+          })
+        }
+      } else if (p && typeof p === 'object') {
+        const text = String(p.text ?? '').trim()
+        if (!text) continue
+        const align = p.align === 'right' || p.align === 'center' || p.align === 'left' ? p.align : merged.textAlign
+        const spanRatio = p.spanRatio ?? merged.textSpanRatio
+        paragraphs.push({ text, align, spanRatio })
+      }
+    }
+  }
+  if (paragraphs.length === 0) {
+    const fallback = merged.text ?? nodeName ?? ''
+    if (String(fallback).trim()) {
+      paragraphs.push({
+        text: String(fallback),
+        align: merged.textAlign,
+        spanRatio: merged.textSpanRatio,
+      })
+    }
+  }
+  merged.paragraphs = paragraphs
+  merged.aspectRatio = Math.max(0.2, Number(merged.aspectRatio) || DEFAULT_SLIDE_TEXT_PANEL.aspectRatio)
+  merged.widthRatio = THREE.MathUtils.clamp(Number(merged.widthRatio) || DEFAULT_SLIDE_TEXT_PANEL.widthRatio, 0.1, 3)
+  merged.textSpanRatio = THREE.MathUtils.clamp(
+    Number(merged.textSpanRatio) || DEFAULT_SLIDE_TEXT_PANEL.textSpanRatio,
+    0.15,
+    1
+  )
+  merged.offsetXRatio = THREE.MathUtils.clamp(
+    Number(merged.offsetXRatio) || DEFAULT_SLIDE_TEXT_PANEL.offsetXRatio,
+    -2,
+    2
+  )
+  merged.offsetYRatio = THREE.MathUtils.clamp(
+    Number(merged.offsetYRatio) || DEFAULT_SLIDE_TEXT_PANEL.offsetYRatio,
+    -2,
+    2
+  )
+  merged.marginXRatio = clamp01(merged.marginXRatio)
+  merged.marginYRatio = clamp01(merged.marginYRatio)
+  merged.paddingXRatio = clamp01(merged.paddingXRatio)
+  merged.paddingYRatio = clamp01(merged.paddingYRatio)
+  merged.textureWidthPx = THREE.MathUtils.clamp(
+    Number(merged.textureWidthPx) || DEFAULT_SLIDE_TEXT_PANEL.textureWidthPx,
+    256,
+    2048
+  )
+  merged.textureDprScale = THREE.MathUtils.clamp(
+    Number(merged.textureDprScale) || DEFAULT_SLIDE_TEXT_PANEL.textureDprScale,
+    0.5,
+    3
+  )
+  merged.fontSizePx = Math.max(8, Number(merged.fontSizePx) || DEFAULT_SLIDE_TEXT_PANEL.fontSizePx)
+  merged.minFontSizePx = Math.max(8, Number(merged.minFontSizePx) || DEFAULT_SLIDE_TEXT_PANEL.minFontSizePx)
+  merged.backgroundMode =
+    merged.backgroundMode === 'panel' || merged.backgroundMode === 'none' ? merged.backgroundMode : 'highlight'
+  for (const key of ['textColor', 'boxColor', 'borderColor']) {
+    if (merged[key] != null) merged[key] = String(merged[key]).trim()
+  }
+  merged.borderWidthPx = Math.max(0, Number(merged.borderWidthPx) || 0)
+  merged.radiusPx = Math.max(0, Number(merged.radiusPx) || 0)
+  merged.highlightPaddingXPx = THREE.MathUtils.clamp(Number(merged.highlightPaddingXPx) || 0, -256, 256)
+  merged.highlightPaddingYPx = THREE.MathUtils.clamp(Number(merged.highlightPaddingYPx) || 0, -256, 256)
+  merged.highlightRadiusPx = Math.max(0, Number(merged.highlightRadiusPx) || 0)
+  merged.paragraphGapPx = THREE.MathUtils.clamp(Number(merged.paragraphGapPx) || 0, -256, 512)
+  merged.lineHeight = Math.max(0.8, Number(merged.lineHeight) || DEFAULT_SLIDE_TEXT_PANEL.lineHeight)
+  merged.stackTextOffsetXRatio = THREE.MathUtils.clamp(
+    Number(merged.stackTextOffsetXRatio) || DEFAULT_SLIDE_TEXT_PANEL.stackTextOffsetXRatio,
+    -0.4,
+    0.4
+  )
+  {
+    const n = Number(merged.stackOpacityFront)
+    merged.stackOpacityFront = Number.isFinite(n)
+      ? clamp01(n)
+      : DEFAULT_SLIDE_TEXT_PANEL.stackOpacityFront
+  }
+  {
+    const n = Number(merged.stackOpacityInitial)
+    merged.stackOpacityInitial = Number.isFinite(n)
+      ? clamp01(n)
+      : DEFAULT_SLIDE_TEXT_PANEL.stackOpacityInitial
+  }
+  if (merged.position && typeof merged.position === 'object') {
+    const x = Number(merged.position.x)
+    const y = Number(merged.position.y)
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      merged.position = { x, y }
+    } else {
+      delete merged.position
+    }
+  }
+  {
+    const zDef = Number.isFinite(Number(merged.zOffset)) ? Number(merged.zOffset) : DEFAULT_SLIDE_TEXT_PANEL.zOffset
+    const normWorld = (raw) => {
+      if (!raw || typeof raw !== 'object') return null
+      const x = Number(raw.x)
+      const y = Number(raw.y)
+      const z = Number(raw.z)
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+      return { x, y, z: Number.isFinite(z) ? z : zDef }
+    }
+    // `position` (editor) wins over `finalPosition` in file — same "at front" placement.
+    const posFromEditor = merged.position
+    const posKey =
+      posFromEditor &&
+      Number.isFinite(Number(posFromEditor.x)) &&
+      Number.isFinite(Number(posFromEditor.y))
+    const posFinal =
+      (posKey
+        ? {
+            x: Number(posFromEditor.x),
+            y: Number(posFromEditor.y),
+            z: zDef,
+          }
+        : null) ||
+      normWorld(merged.finalPosition) ||
+      normWorld(merged.position)
+    const posInitial = posFinal ? (normWorld(merged.initialPosition) ?? { ...posFinal }) : null
+    if (posFinal) {
+      merged.position = { x: posFinal.x, y: posFinal.y }
+      merged.finalPosition = { x: posFinal.x, y: posFinal.y, z: posFinal.z }
+      merged.initialPosition = { x: posInitial.x, y: posInitial.y, z: posInitial.z }
+    } else {
+      delete merged.finalPosition
+      delete merged.initialPosition
+    }
+  }
+  return merged
+}
+
+function normalizeSlideTextPanelConfigs(node) {
+  const list = Array.isArray(node?.textPanels) ? node.textPanels : node?.textPanel ? [node.textPanel] : []
+  const out = []
+  for (let i = 0; i < list.length; i++) {
+    const fallbackName = i === 0 ? node?.name : ''
+    const panel = normalizeSlideTextPanelConfig(list[i], fallbackName)
+    if (panel) out.push(panel)
+  }
+  return out
+}
+
+function normalizeSlideImagePanelConfig(rawPanel) {
+  if (!rawPanel || rawPanel.enabled === false) return null
+  const merged = { ...DEFAULT_SLIDE_IMAGE_PANEL, ...rawPanel }
+  const src = String(merged.src ?? merged.image ?? merged.url ?? '').trim()
+  if (!src) return null
+  merged.src = src
+
+  {
+    const raw = merged.sizeRatio ?? merged.scaleRatio ?? merged.scale
+    const n = Number(raw)
+    merged.sizeRatio = Number.isFinite(n) ? THREE.MathUtils.clamp(n, 0.02, 20) : null
+  }
+  merged.widthRatio = THREE.MathUtils.clamp(
+    Number(merged.widthRatio) || DEFAULT_SLIDE_IMAGE_PANEL.widthRatio,
+    0.02,
+    20
+  )
+  merged.heightRatio = THREE.MathUtils.clamp(
+    Number(merged.heightRatio) || DEFAULT_SLIDE_IMAGE_PANEL.heightRatio,
+    0.02,
+    20
+  )
+  merged.offsetXRatio = THREE.MathUtils.clamp(
+    Number(merged.offsetXRatio) || DEFAULT_SLIDE_IMAGE_PANEL.offsetXRatio,
+    -20,
+    20
+  )
+  merged.offsetYRatio = THREE.MathUtils.clamp(
+    Number(merged.offsetYRatio) || DEFAULT_SLIDE_IMAGE_PANEL.offsetYRatio,
+    -20,
+    20
+  )
+  merged.marginXRatio = THREE.MathUtils.clamp(
+    Number(merged.marginXRatio) || DEFAULT_SLIDE_IMAGE_PANEL.marginXRatio,
+    -20,
+    20
+  )
+  merged.marginYRatio = THREE.MathUtils.clamp(
+    Number(merged.marginYRatio) || DEFAULT_SLIDE_IMAGE_PANEL.marginYRatio,
+    -20,
+    20
+  )
+  merged.aspectRatio = THREE.MathUtils.clamp(
+    Number(merged.aspectRatio) || DEFAULT_SLIDE_IMAGE_PANEL.aspectRatio,
+    0.02,
+    50
+  )
+  merged.opacity = clamp01(merged.opacity)
+  {
+    const raw =
+      merged.stackOpacityFront ??
+      merged.frontOpacity ??
+      merged.finalOpacity
+    const n = Number(raw)
+    merged.stackOpacityFront = Number.isFinite(n)
+      ? clamp01(n)
+      : DEFAULT_SLIDE_IMAGE_PANEL.stackOpacityFront
+  }
+  {
+    const raw = merged.stackOpacityInitial ?? merged.initialOpacity
+    const n = Number(raw)
+    merged.stackOpacityInitial = Number.isFinite(n)
+      ? clamp01(n)
+      : DEFAULT_SLIDE_IMAGE_PANEL.stackOpacityInitial
+  }
+  merged.anchor =
+    merged.anchor === 'top-left' ||
+    merged.anchor === 'top-right' ||
+    merged.anchor === 'bottom-left' ||
+    merged.anchor === 'bottom-right' ||
+    merged.anchor === 'center'
+      ? merged.anchor
+      : DEFAULT_SLIDE_IMAGE_PANEL.anchor
+  merged.zOffset = Number.isFinite(Number(merged.zOffset))
+    ? Number(merged.zOffset)
+    : DEFAULT_SLIDE_IMAGE_PANEL.zOffset
+
+  const normalizePanelPos = (raw, fallbackZ) => {
+    if (!raw || typeof raw !== 'object') return null
+    const x = Number(raw.x)
+    const y = Number(raw.y)
+    const z = Number(raw.z)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+    return { x, y, z: Number.isFinite(z) ? z : fallbackZ }
+  }
+
+  const normalizeSizeRatio = (raw) => {
+    const n = Number(raw)
+    return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 0.02, 20) : null
+  }
+
+  merged.finalPosition = normalizePanelPos(
+    merged.finalPosition ?? merged.frontPosition ?? merged.positionFront,
+    merged.zOffset
+  )
+  merged.initialPosition = normalizePanelPos(
+    merged.initialPosition ?? merged.positionInitial,
+    merged.zOffset
+  )
+  merged.finalSizeRatio = normalizeSizeRatio(
+    merged.finalSizeRatio ?? merged.frontSizeRatio ?? merged.sizeRatioFront
+  )
+  merged.initialSizeRatio = normalizeSizeRatio(
+    merged.initialSizeRatio ?? merged.sizeRatioInitial
+  )
+
+  {
+    const cAll = Math.max(0, Number(merged.cropPx) || 0)
+    const readSide = (v) => {
+      if (v == null || v === '') return cAll
+      const n = Number(v)
+      return Number.isFinite(n) ? Math.max(0, n) : cAll
+    }
+    let L = readSide(merged.cropLeftPx)
+    let R = readSide(merged.cropRightPx)
+    let T = readSide(merged.cropTopPx)
+    let B = readSide(merged.cropBottomPx)
+    merged.cropL = L
+    merged.cropR = R
+    merged.cropT = T
+    merged.cropB = B
+  }
+
+  if (merged.position && typeof merged.position === 'object') {
+    const x = Number(merged.position.x)
+    const y = Number(merged.position.y)
+    const z = Number(merged.position.z)
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      merged.position = { x, y, z: Number.isFinite(z) ? z : merged.zOffset }
+    } else {
+      delete merged.position
+    }
+  }
+  return merged
+}
+
+function normalizeSlideImagePanelConfigs(node) {
+  const list = Array.isArray(node?.imagePanels) ? node.imagePanels : node?.imagePanel ? [node.imagePanel] : []
+  const out = []
+  for (let i = 0; i < list.length; i++) {
+    const panel = normalizeSlideImagePanelConfig(list[i])
+    if (panel) out.push(panel)
+  }
+  return out
+}
+
+function createSlideTextPanelTexture(panel) {
+  const logicalWidth = Math.round(panel.textureWidthPx)
+  const logicalHeight = Math.max(64, Math.round(logicalWidth / panel.aspectRatio))
+  const dpr = THREE.MathUtils.clamp(
+    (window.devicePixelRatio || 1) * (panel.textureDprScale || 1),
+    1,
+    4
+  )
+  const canvasWidth = Math.round(logicalWidth * dpr)
+  const canvasHeight = Math.round(logicalHeight * dpr)
+  const canvas = document.createElement('canvas')
+  canvas.width = canvasWidth
+  canvas.height = canvasHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  if (dpr !== 1) ctx.scale(dpr, dpr)
+
+  const padX = panel.paddingXRatio * logicalWidth
+  const padY = panel.paddingYRatio * logicalHeight
+  if (panel.backgroundMode === 'panel') {
+    const boxX = 0
+    const boxY = 0
+    const boxW = logicalWidth
+    const boxH = logicalHeight
+    roundedRectPath(ctx, boxX, boxY, boxW, boxH, panel.radiusPx)
+    ctx.fillStyle = hexToRgba(panel.boxColor, panel.boxOpacity)
+    ctx.fill()
+    if (panel.borderWidthPx > 0 && panel.borderOpacity > 0) {
+      ctx.lineWidth = panel.borderWidthPx
+      ctx.strokeStyle = hexToRgba(panel.borderColor, panel.borderOpacity)
+      ctx.stroke()
+    }
+  }
+
+  const maxTextWidth = Math.max(1, logicalWidth - padX * 2)
+  const maxTextHeight = Math.max(1, logicalHeight - padY * 2)
+  let fontSize = panel.fontSizePx
+  let layout = { lines: panel.paragraphs.map((p) => ({ text: p.text, align: p.align })), gaps: [] }
+  let lineHeightPx = fontSize * panel.lineHeight
+  const minFont = Math.min(panel.fontSizePx, panel.minFontSizePx)
+
+  while (fontSize >= minFont) {
+    ctx.font = `${panel.fontWeight} ${fontSize}px "${panel.fontFamily}", sans-serif`
+    layout = buildParagraphLines(ctx, panel.paragraphs, maxTextWidth)
+    lineHeightPx = fontSize * panel.lineHeight
+    const h = computeTextBlockHeight(layout.lines, layout.gaps, lineHeightPx, panel.paragraphGapPx)
+    if (!panel.autoFit || h <= maxTextHeight) break
+    fontSize -= 1
+  }
+
+  ctx.font = `${panel.fontWeight} ${fontSize}px "${panel.fontFamily}", sans-serif`
+  ctx.fillStyle = panel.textColor
+  ctx.textBaseline = 'top'
+
+  const textBlockHeight = computeTextBlockHeight(
+    layout.lines,
+    layout.gaps,
+    lineHeightPx,
+    panel.paragraphGapPx
+  )
+  const startY =
+    panel.verticalAlign === 'middle'
+      ? (logicalHeight - textBlockHeight) * 0.5
+      : panel.verticalAlign === 'bottom'
+        ? logicalHeight - padY - textBlockHeight
+        : padY
+  const getTextX = (align, spanRatio) => {
+    const ratio = THREE.MathUtils.clamp(Number(spanRatio) || 1, 0.15, 1)
+    const spanWidth = maxTextWidth * ratio
+    if (align === 'center') return logicalWidth * 0.5
+    if (align === 'right') return logicalWidth - padX
+    return padX + (maxTextWidth - spanWidth) * 0
+  }
+
+  let y = startY
+  const gapSet = new Set(layout.gaps)
+  for (let i = 0; i < layout.lines.length; i++) {
+    const lineSpec = layout.lines[i]
+    const line = lineSpec?.text ?? ''
+    const align = lineSpec?.align === 'center' || lineSpec?.align === 'right' ? lineSpec.align : 'left'
+    const spanRatio = lineSpec?.spanRatio ?? panel.textSpanRatio
+    const textX = getTextX(align, spanRatio)
+    const lineWidth = ctx.measureText(line).width
+    if (panel.backgroundMode === 'highlight' && panel.boxOpacity > 0 && line.trim().length > 0) {
+      const hx =
+        align === 'center'
+          ? textX - lineWidth * 0.5 - panel.highlightPaddingXPx
+          : align === 'right'
+            ? textX - lineWidth - panel.highlightPaddingXPx
+            : textX - panel.highlightPaddingXPx
+      const hy = y - panel.highlightPaddingYPx * 0.5
+      const hw = Math.max(1, lineWidth + panel.highlightPaddingXPx * 2)
+      const hh = Math.max(1, lineHeightPx + panel.highlightPaddingYPx)
+      roundedRectPath(ctx, hx, hy, hw, hh, panel.highlightRadiusPx)
+      ctx.fillStyle = hexToRgba(panel.boxColor, panel.boxOpacity)
+      ctx.fill()
+      if (panel.borderWidthPx > 0 && panel.borderOpacity > 0) {
+        ctx.lineWidth = panel.borderWidthPx
+        ctx.strokeStyle = hexToRgba(panel.borderColor, panel.borderOpacity)
+        ctx.stroke()
+      }
+    }
+    ctx.fillStyle = panel.textColor
+    ctx.textAlign = align
+    ctx.fillText(line, textX, y)
+    y += lineHeightPx
+    if (gapSet.has(i + 1)) y += panel.paragraphGapPx
+  }
+
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.minFilter = THREE.LinearMipmapLinearFilter
+  tex.magFilter = THREE.LinearFilter
+  tex.generateMipmaps = true
+  if (renderer?.capabilities?.getMaxAnisotropy) {
+    tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
+  }
+  tex.needsUpdate = true
+  return tex
+}
+
+function getAnchoredPanelPosition(anchor, innerWidth, innerHeight, panelWidth, panelHeight, marginX, marginY) {
+  const left = -innerWidth * 0.5 + panelWidth * 0.5 + marginX
+  const right = innerWidth * 0.5 - panelWidth * 0.5 - marginX
+  const top = innerHeight * 0.5 - panelHeight * 0.5 - marginY
+  const bottom = -innerHeight * 0.5 + panelHeight * 0.5 + marginY
+  switch (anchor) {
+    case 'top-right':
+      return { x: right, y: top }
+    case 'bottom-left':
+      return { x: left, y: bottom }
+    case 'bottom-right':
+      return { x: right, y: bottom }
+    case 'center':
+      return { x: 0, y: 0 }
+    default:
+      return { x: left, y: top }
+  }
+}
+
+function hasSlideTextPanelAbsolutePosition(panel) {
+  if (panel?.finalPosition) {
+    const f = panel.finalPosition
+    return Number.isFinite(Number(f.x)) && Number.isFinite(Number(f.y))
+  }
+  const p = panel?.position
+  return p && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y))
+}
+
+function hasSlideImagePanelAbsolutePosition(panel) {
+  const p = panel?.position
+  return p && typeof p.x === 'number' && typeof p.y === 'number'
+}
+
+/**
+ * Weight in [0,1] for stack text/image “initial” vs “final” (position, size, opacity).
+ * 0 = at the fractional front (`gltfSlideIndex`); 1 = one or more steps away in either direction.
+ * Uses |i − gltfSlideIndex| so slide index 0 still eases during transitions (not only i > front).
+ */
+function getStackTextOffsetWeightForCardIndex(i) {
+  const g = Number(gltfSlideIndex)
+  const gi = Number.isFinite(g) ? g : 0
+  return Math.min(1, Math.abs(i - gi))
+}
+
+/**
+ * Animates the slide-text wrapper group in X while `gltfSlideIndex` tweens; updates per-panel stack
+ * opacities the same way. Skipped during TP gizmo so we don’t fight TransformControls. Layout X stays
+ * on the child mesh; stack shift is the parent only.
+ */
+function updateSlideTextPanelStackVisuals() {
+  if (isTextPanelVisualEditActive()) return
+  const n = cards.length
+  if (n === 0) return
+  const { innerWidth } = getSlideCardInnerSize()
+  for (let ci = 0; ci < n; ci++) {
+    const card = cards[ci]
+    const slideIdx = card.userData?.index
+    if (slideIdx == null) continue
+    const w = getStackTextOffsetWeightForCardIndex(slideIdx)
+    const base = card.userData?.slideCardOpacity
+    const cardBase = base === undefined ? 1 : THREE.MathUtils.clamp(base, 0, 1)
+    for (const child of card.children) {
+      if (child.userData?.textPanelStackOffsetGroup) {
+        const ratio = child.userData.textPanelStackOffsetXRatio ?? 0
+        child.position.set(innerWidth * ratio * w, 0, 0)
+      }
+    }
+    card.traverse((obj) => {
+      if (!obj.isMesh) return
+      if (!obj.userData?.slideTextPanel && !obj.userData?.slideImagePanel) return
+      if (obj.userData?.slideTextPanel) {
+        const pF = obj.userData.textPanelPositionFinal
+        const pI = obj.userData.textPanelPositionInitial
+        if (pF && pI) {
+          const zF = pF.z
+          const zI = pI.z
+          const useZ = Number.isFinite(zF) && Number.isFinite(zI)
+          obj.position.set(
+            THREE.MathUtils.lerp(pF.x, pI.x, w),
+            THREE.MathUtils.lerp(pF.y, pI.y, w),
+            useZ ? THREE.MathUtils.lerp(zF, zI, w) : (Number.isFinite(zF) ? zF : obj.position.z)
+          )
+        }
+      } else if (obj.userData?.slideImagePanel) {
+        const pF = obj.userData.imagePanelPositionFinal
+        const pI = obj.userData.imagePanelPositionInitial
+        if (pF && pI) {
+          obj.position.set(
+            THREE.MathUtils.lerp(pF.x, pI.x, w),
+            THREE.MathUtils.lerp(pF.y, pI.y, w),
+            THREE.MathUtils.lerp(pF.z, pI.z, w)
+          )
+        }
+        const useSizeRatio = !!obj.userData.imagePanelUseSizeRatio
+        if (useSizeRatio) {
+          const aspectRaw = Number(obj.userData.imagePanelAspect)
+          const aspect = Number.isFinite(aspectRaw) ? Math.max(0.02, aspectRaw) : 1
+          const rF = Number(obj.userData.imagePanelSizeRatioFinal)
+          const rI = Number(obj.userData.imagePanelSizeRatioInitial)
+          const ratioF = Number.isFinite(rF) ? rF : 1
+          const ratioI = Number.isFinite(rI) ? rI : ratioF
+          const ratio = THREE.MathUtils.lerp(ratioF, ratioI, w)
+          const width = innerWidth * ratio
+          const height = width / aspect
+          obj.scale.set(width, height, 1)
+        } else {
+          const w0 = Number(obj.userData.imagePanelStaticWidth)
+          const h0 = Number(obj.userData.imagePanelStaticHeight)
+          const width = Number.isFinite(w0) ? w0 : 1
+          const height = Number.isFinite(h0) ? h0 : 1
+          obj.scale.set(width, height, 1)
+        }
+      }
+      const mat = obj.material
+      const mats = Array.isArray(mat) ? mat : [mat]
+      const raw0 = obj.userData?.slideTextPanel
+        ? obj.userData.textPanelStackOpacityFront
+        : obj.userData.imagePanelStackOpacityFront
+      const raw1 = obj.userData?.slideTextPanel
+        ? obj.userData.textPanelStackOpacityInitial
+        : obj.userData.imagePanelStackOpacityInitial
+      const o0 = Number.isFinite(Number(raw0)) ? clamp01(Number(raw0)) : 1
+      const o1 = Number.isFinite(Number(raw1)) ? clamp01(Number(raw1)) : 1
+      const t = THREE.MathUtils.lerp(o0, o1, w)
+      const baseRaw = Number(obj.userData?.slideOpacityBase)
+      const base = Number.isFinite(baseRaw) ? clamp01(baseRaw) : 1
+      const mOpacity = cardBase * base * t
+      for (const m of mats) {
+        if (!m) continue
+        m.transparent = true
+        m.opacity = mOpacity
+        if (m.uniforms?.opacity) m.uniforms.opacity.value = mOpacity
+      }
+    })
+  }
+}
+
+function addOneSlideTextPanel(group3d, panel, innerWidth, innerHeight, panelIndex) {
+  const panelWidth = innerWidth * panel.widthRatio
+  const panelHeight = panelWidth / panel.aspectRatio
+  const marginX = innerWidth * panel.marginXRatio
+  const marginY = innerHeight * panel.marginYRatio
+  const anchored = getAnchoredPanelPosition(
+    panel.anchor,
+    innerWidth,
+    innerHeight,
+    panelWidth,
+    panelHeight,
+    marginX,
+    marginY
+  )
+  const tex = createSlideTextPanelTexture(panel)
+  if (!tex) return
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(panelWidth, panelHeight),
+    new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  )
+  plane.name = 'slide-text-panel'
+  plane.userData.slideTextPanel = true
+  plane.userData.textPanelIndex = panelIndex
+  plane.userData.textPanelStackOpacityFront = panel.stackOpacityFront
+  plane.userData.textPanelStackOpacityInitial = panel.stackOpacityInitial
+  if (hasSlideTextPanelAbsolutePosition(panel)) {
+    const pF =
+      panel.finalPosition ??
+      (panel.position
+        ? { x: panel.position.x, y: panel.position.y, z: panel.zOffset }
+        : null)
+    const pI = panel.initialPosition ?? pF
+    if (pF) {
+      plane.userData.textPanelPositionFinal = { x: pF.x, y: pF.y, z: pF.z ?? panel.zOffset }
+    }
+    if (pI) {
+      plane.userData.textPanelPositionInitial = { x: pI.x, y: pI.y, z: pI.z ?? panel.zOffset }
+    }
+    if (pF) {
+      const z0 = pF.z ?? panel.zOffset
+      plane.position.set(pF.x, pF.y, z0)
+    } else {
+      plane.position.set(panel.position.x, panel.position.y, panel.zOffset)
+    }
+  } else {
+    const offsetX = innerWidth * panel.offsetXRatio
+    const offsetY = innerHeight * panel.offsetYRatio
+    plane.position.set(anchored.x + offsetX, anchored.y + offsetY, panel.zOffset)
+  }
+  const cardIndex = group3d.userData?.index ?? 0
+  const stackRatio = panel.stackTextOffsetXRatio ?? 0
+  if (stackRatio === 0) {
+    group3d.add(plane)
+    return
+  }
+  const t = getStackTextOffsetWeightForCardIndex(cardIndex)
+  const offsetGroup = new THREE.Group()
+  offsetGroup.name = 'slide-text-panel-offset'
+  offsetGroup.userData.textPanelStackOffsetGroup = true
+  offsetGroup.userData.textPanelStackOffsetXRatio = stackRatio
+  offsetGroup.position.set(innerWidth * stackRatio * t, 0, 0)
+  offsetGroup.add(plane)
+  group3d.add(offsetGroup)
+}
+
+function addSlideTextPanels(group3d, node, innerWidth, innerHeight) {
+  const panels = normalizeSlideTextPanelConfigs(node)
+  if (panels.length === 0) return
+  for (let i = 0; i < panels.length; i++) addOneSlideTextPanel(group3d, panels[i], innerWidth, innerHeight, i)
+}
+
+function configureSlideImagePanelTexture(tex) {
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.flipY = true
+  tex.wrapS = THREE.ClampToEdgeWrapping
+  tex.wrapT = THREE.ClampToEdgeWrapping
+  tex.minFilter = THREE.LinearMipmapLinearFilter
+  tex.magFilter = THREE.LinearFilter
+  tex.generateMipmaps = true
+}
+
+function getTextureImageDimensions(tex) {
+  const img = tex?.image
+  if (!img) return null
+  const w = Number(img.naturalWidth ?? img.videoWidth ?? img.width)
+  const h = Number(img.naturalHeight ?? img.videoHeight ?? img.height)
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null
+  return { w, h }
+}
+
+/**
+ * @returns {{ w: number, h: number, L: number, R: number, T: number, B: number, innerW: number, innerH: number } | null}
+ */
+function getImagePanelCropState(tex, L, R, T, B) {
+  const dims = getTextureImageDimensions(tex)
+  if (!dims) return null
+  const { w, h } = dims
+  let a = Math.max(0, L)
+  let b = Math.max(0, R)
+  let c = Math.max(0, T)
+  let d = Math.max(0, B)
+  if (a + b >= w) a = 0, b = 0
+  if (c + d >= h) c = 0, d = 0
+  let iW = w - a - b
+  let iH = h - c - d
+  if (iW < 1 || iH < 1) {
+    a = 0
+    b = 0
+    c = 0
+    d = 0
+    iW = w
+    iH = h
+  }
+  return { w, h, L: a, R: b, T: c, B: d, innerW: iW, innerH: iH }
+}
+
+function applyImagePanelMapCrop(tex, L, R, T, B) {
+  const s = getImagePanelCropState(tex, L, R, T, B)
+  if (!s) return
+  const { w: W, h: H, L: a, R: b, T: c, B: d, innerW, innerH } = s
+  tex.offset.set(0, 0)
+  tex.repeat.set(1, 1)
+  if (a <= 0 && b <= 0 && c <= 0 && d <= 0) {
+    tex.needsUpdate = true
+    return
+  }
+  // Sample sub-rectangle (u,v) in [0,1]². Works with flipY on image maps.
+  tex.repeat.set(innerW / W, innerH / H)
+  tex.offset.set(a / W, c / H)
+  tex.needsUpdate = true
+}
+
+function addOneSlideImagePanel(group3d, panel, innerWidth, innerHeight, panelIndex) {
+  const cropL = Math.max(0, Number(panel.cropL) || 0)
+  const cropR = Math.max(0, Number(panel.cropR) || 0)
+  const cropT = Math.max(0, Number(panel.cropT) || 0)
+  const cropB = Math.max(0, Number(panel.cropB) || 0)
+  const resolveAnchoredBasePosition = (panelWidth, panelHeight) => {
+    const marginX = innerWidth * panel.marginXRatio
+    const marginY = innerHeight * panel.marginYRatio
+    const anchored = getAnchoredPanelPosition(
+      panel.anchor,
+      innerWidth,
+      innerHeight,
+      panelWidth,
+      panelHeight,
+      marginX,
+      marginY
+    )
+    if (hasSlideImagePanelAbsolutePosition(panel)) {
+      return {
+        x: panel.position.x,
+        y: panel.position.y,
+        z: panel.position.z ?? panel.zOffset,
+      }
+    }
+    const offsetX = innerWidth * panel.offsetXRatio
+    const offsetY = innerHeight * panel.offsetYRatio
+    return { x: anchored.x + offsetX, y: anchored.y + offsetY, z: panel.zOffset }
+  }
+  let imageAspect = panel.aspectRatio
+  const usesSizeRatio = panel.sizeRatio != null || panel.finalSizeRatio != null || panel.initialSizeRatio != null
+  const staticWidth = innerWidth * panel.widthRatio
+  const staticHeight = innerHeight * panel.heightRatio
+  const defaultSizeRatio = panel.sizeRatio ?? panel.finalSizeRatio ?? panel.initialSizeRatio
+  const sizeRatioFinal = panel.finalSizeRatio ?? defaultSizeRatio
+  const sizeRatioInitial = panel.initialSizeRatio ?? sizeRatioFinal
+  const startWidth = usesSizeRatio ? innerWidth * (sizeRatioFinal ?? 1) : staticWidth
+  const startHeight = usesSizeRatio ? startWidth / Math.max(0.02, imageAspect) : staticHeight
+  const basePos = resolveAnchoredBasePosition(startWidth, startHeight)
+  const posFinal = panel.finalPosition ?? basePos
+  const posInitial = panel.initialPosition ?? posFinal
+
+  const mat = new THREE.MeshBasicMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    opacity: panel.opacity,
+  })
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat)
+  plane.name = 'slide-image-panel'
+  plane.userData.slideImagePanel = true
+  plane.userData.imagePanelIndex = panelIndex
+  plane.userData.slideOpacityBase = panel.opacity
+  plane.userData.imagePanelStackOpacityFront = panel.stackOpacityFront
+  plane.userData.imagePanelStackOpacityInitial = panel.stackOpacityInitial
+  plane.userData.imagePanelAspect = imageAspect
+  plane.userData.imagePanelUseSizeRatio = usesSizeRatio
+  plane.userData.imagePanelSizeRatioFinal = sizeRatioFinal
+  plane.userData.imagePanelSizeRatioInitial = sizeRatioInitial
+  plane.userData.imagePanelStaticWidth = staticWidth
+  plane.userData.imagePanelStaticHeight = staticHeight
+  plane.userData.imagePanelPositionFinal = { ...posFinal }
+  plane.userData.imagePanelPositionInitial = { ...posInitial }
+  plane.position.set(posFinal.x, posFinal.y, posFinal.z)
+  if (usesSizeRatio) {
+    const w = innerWidth * (sizeRatioFinal ?? 1)
+    const h = w / Math.max(0.02, imageAspect)
+    plane.scale.set(w, h, 1)
+  } else {
+    plane.scale.set(staticWidth, staticHeight, 1)
+  }
+  group3d.add(plane)
+
+  const applyTex = (baseTex) => {
+    if (!plane.parent) return
+    const tex = baseTex.clone()
+    configureSlideImagePanelTexture(tex)
+    applyImagePanelMapCrop(tex, cropL, cropR, cropT, cropB)
+    mat.map = tex
+    mat.needsUpdate = true
+  }
+  const applyImageAspectFromTexture = (tex) => {
+    const st = getImagePanelCropState(tex, cropL, cropR, cropT, cropB)
+    if (!st) return
+    imageAspect = st.innerW / st.innerH
+    plane.userData.imagePanelAspect = imageAspect
+    if (usesSizeRatio) {
+      const ratioF = Number(plane.userData.imagePanelSizeRatioFinal)
+      const ratio = Number.isFinite(ratioF) ? ratioF : 1
+      const w = innerWidth * ratio
+      const h = w / Math.max(0.02, imageAspect)
+      plane.scale.set(w, h, 1)
+    } else {
+      const w0 = staticWidth
+      const h0 = w0 / Math.max(0.02, imageAspect)
+      plane.userData.imagePanelStaticWidth = w0
+      plane.userData.imagePanelStaticHeight = h0
+      plane.scale.set(w0, h0, 1)
+    }
+  }
+  const cached = slideImagePanelTextureCache.get(panel.src)
+  if (cached) {
+    applyImageAspectFromTexture(cached)
+    applyTex(cached)
+    return
+  }
+  textureLoader.load(
+    panel.src,
+    (tex) => {
+      configureSlideImagePanelTexture(tex)
+      slideImagePanelTextureCache.set(panel.src, tex)
+      applyImageAspectFromTexture(tex)
+      applyTex(tex)
+    },
+    undefined,
+    () => {}
+  )
+}
+
+function addSlideImagePanels(group3d, node, innerWidth, innerHeight) {
+  const panels = normalizeSlideImagePanelConfigs(node)
+  if (panels.length === 0) return
+  for (let i = 0; i < panels.length; i++) addOneSlideImagePanel(group3d, panels[i], innerWidth, innerHeight, i)
+}
+
+function getSlideCardInnerSize() {
+  const borderThickness = 0.01 * 1.5 * stackLayout.scale
+  return {
+    innerWidth: CARD_WIDTH - 2 * borderThickness,
+    innerHeight: CARD_HEIGHT - 2 * borderThickness,
+  }
+}
+
+function removeSlideTextPanelMeshes(group3d) {
+  if (!group3d) return
+  const disposeMesh = (mesh) => {
+    mesh.geometry?.dispose()
+    if (mesh.material) {
+      const m = mesh.material
+      if (m.map) m.map.dispose()
+      m.dispose()
+    }
+  }
+  const groups = []
+  group3d.traverse((obj) => {
+    if (obj.userData?.textPanelStackOffsetGroup) groups.push(obj)
+  })
+  for (const g of groups) {
+    g.traverse((obj) => {
+      if (obj.isMesh) disposeMesh(obj)
+    })
+    g.removeFromParent()
+  }
+  const legacy = []
+  group3d.traverse((obj) => {
+    if (obj.isMesh && obj.userData?.slideTextPanel) legacy.push(obj)
+  })
+  for (const mesh of legacy) {
+    disposeMesh(mesh)
+    mesh.removeFromParent()
+  }
+}
+
+function refreshSlideTextPanelsOnCard(group3d, node) {
+  if (!group3d || !node) return
+  removeSlideTextPanelMeshes(group3d)
+  const { innerWidth, innerHeight } = getSlideCardInnerSize()
+  addSlideTextPanels(group3d, node, innerWidth, innerHeight)
+}
+
+function removeSlideImagePanelMeshes(group3d) {
+  if (!group3d) return
+  const meshes = []
+  group3d.traverse((obj) => {
+    if (obj.isMesh && obj.userData?.slideImagePanel) meshes.push(obj)
+  })
+  for (const mesh of meshes) {
+    mesh.geometry?.dispose()
+    const mat = mesh.material
+    const mats = Array.isArray(mat) ? mat : [mat]
+    for (const m of mats) {
+      if (!m) continue
+      if (m.map) m.map.dispose()
+      m.dispose()
+    }
+    mesh.removeFromParent()
+  }
+}
+
+function refreshSlideImagePanelsOnCard(group3d, node) {
+  if (!group3d || !node) return
+  removeSlideImagePanelMeshes(group3d)
+  const { innerWidth, innerHeight } = getSlideCardInnerSize()
+  addSlideImagePanels(group3d, node, innerWidth, innerHeight)
+}
+
+function getDevTextEditorSlidePathLabel() {
+  const parts = []
+  for (let i = 1; i < path.length; i++) {
+    const idx = path[i].parentIndex
+    const parentGroup = path[i - 1].group
+    const node = parentGroup[idx]
+    parts.push(node?.name ?? String(idx))
+  }
+  const cur = currentGroup()[currentIndex]
+  parts.push(cur?.name ?? String(currentIndex))
+  return parts.join(' → ')
+}
+
 function createCardsForGroup(group, parentIndexForLabels) {
   const n = group.length
   const positions = getSlotPositions(n)
@@ -1191,11 +2396,13 @@ function createCardsForGroup(group, parentIndexForLabels) {
     color: 0x808080,
     side: THREE.DoubleSide,
     transparent: true,
+    depthWrite: false,
   })
   const innerMaterial = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     side: THREE.DoubleSide,
     transparent: true,
+    depthWrite: false,
   })
   const labelSize = 0.32
   const labelGeometry = new THREE.PlaneGeometry(labelSize, labelSize)
@@ -1205,7 +2412,7 @@ function createCardsForGroup(group, parentIndexForLabels) {
     const node = group[i]
     const pos = positions[i]
     const group3d = new THREE.Group()
-    group3d.userData = { index: i, parentIndex: parentIndexForLabels, pageTurnY: 0 }
+    group3d.userData = { index: i, parentIndex: parentIndexForLabels, pageTurnY: 0, slideCardOpacity: 1 }
     group3d.position.set(pos.x, pos.y ?? 0, pos.z)
     if (!node.art) {
       const border = new THREE.Mesh(borderGeometry, borderMaterial.clone())
@@ -1299,6 +2506,8 @@ function createCardsForGroup(group, parentIndexForLabels) {
       label.position.set(CARD_WIDTH / 2 - labelSize / 2 - 0.05, -CARD_HEIGHT / 2 + labelSize / 2 + 0.05, 0.002)
       group3d.add(label)
     }
+    addSlideImagePanels(group3d, node, innerWidth, innerHeight)
+    addSlideTextPanels(group3d, node, innerWidth, innerHeight)
     scene.add(group3d)
     cards.push(group3d)
   }
@@ -1358,15 +2567,30 @@ function switchToGroup(group, parentIndexForLabels, frontIndex) {
       setCardOpacity(cards[i], 1)
     }
   }
+  syncSlideTimeline()
 }
 
 function setCardOpacity(group, value) {
-  group.children.forEach((child) => {
-    if (!child.material) return
-    const m = child.material
-    m.opacity = value
-    if (m.uniforms?.opacity) m.uniforms.opacity.value = value
+  const v = THREE.MathUtils.clamp(value, 0, 1)
+  if (group.userData) group.userData.slideCardOpacity = v
+  // Text panels: base card opacity is `slideCardOpacity`; stack front/initial opacities are applied in
+  // `updateSlideTextPanelStackVisuals` (also under `slide-text-panel-offset` groups).
+  group.traverse((obj) => {
+    if (!obj.isMesh) return
+    if (obj.userData?.slideTextPanel || obj.userData?.slideImagePanel) return
+    const mat = obj.material
+    const mats = Array.isArray(mat) ? mat : [mat]
+    const base = Number(obj.userData?.slideOpacityBase)
+    const baseOpacity = Number.isFinite(base) ? THREE.MathUtils.clamp(base, 0, 1) : 1
+    const outOpacity = v * baseOpacity
+    for (const m of mats) {
+      if (!m) continue
+      m.transparent = true
+      m.opacity = outOpacity
+      if (m.uniforms?.opacity) m.uniforms.opacity.value = outOpacity
+    }
   })
+  if (!isTextPanelVisualEditActive()) updateSlideTextPanelStackVisuals()
 }
 
 function getCardOpacity(group) {
@@ -1374,6 +2598,17 @@ function getCardOpacity(group) {
   if (!first?.material) return 1
   const m = first.material
   return m.uniforms?.opacity ? m.uniforms.opacity.value : m.opacity
+}
+
+function setCardRenderOrder(group, order) {
+  if (!group) return
+  group.traverse((obj) => {
+    if (obj.isMesh) obj.renderOrder = order
+  })
+}
+
+function resetAllCardRenderOrders() {
+  for (const c of cards) setCardRenderOrder(c, 0)
 }
 
 function updateSlideArtEffects() {
@@ -1401,6 +2636,30 @@ function updateSlideArtEffects() {
 
 function numSlides() {
   return currentGroup().length
+}
+
+function syncSlideTimeline() {
+  try {
+    if (path.length < 2) {
+      buildSlideTimeline(slideTimelineGroup, { n: 0, slotPositions: [], config: false, cards })
+      return
+    }
+    const owner = getOwnerNode(path)
+    const n = numSlides()
+    buildSlideTimeline(slideTimelineGroup, {
+      n,
+      slotPositions,
+      config: owner?.timeline ?? null,
+      cards,
+      cardHeight: CARD_HEIGHT,
+    })
+    updateSlideTimeline(slideTimelineGroup, gltfSlideIndex, camera, undefined, currentIndex, targetIndex)
+  } catch (e) {
+    console.error('syncSlideTimeline failed; timeline disabled.', e)
+    try {
+      buildSlideTimeline(slideTimelineGroup, { n: 0, slotPositions: [], config: false, cards })
+    } catch (_) {}
+  }
 }
 
 function lastSlideIndex() {
@@ -1735,10 +2994,98 @@ function enterChildWithTransition() {
   const slot0 = slotPositions[0]
   const axis = getPageTurnAxis(slot0)
   const restX = slot0.x
+  const parentIndexForLabels = currentIndex
 
+  resetAllCardRenderOrders()
+  setCardRenderOrder(cards[currentIndex], 2)
+
+  const endEnterChild = () => {
+    resetAllCardRenderOrders()
+    activeTimeline = null
+    isTransitioning = false
+  }
+  const killEnterChild = () => {
+    resetAllCardRenderOrders()
+    activeTimeline = null
+    isTransitioning = false
+  }
+
+  // Phase 1: collapse + page-turn parent slide out. Phase 2 (swap, page-in, uncollapse) runs after rAF
+  // so the new meshes render one frame and GSAP does not snap child tweens to end in the same tick.
   activeTimeline = gsap.timeline({
-    onComplete: () => { activeTimeline = null; isTransitioning = false },
-    onKill: () => { activeTimeline = null; isTransitioning = false },
+    onComplete: () => {
+      removeCardsFromScene(cards)
+      path.push({ group: children, parentIndex: parentIndexForLabels })
+      slotPositions = getSlotPositions(children.length)
+      currentIndex = 0
+      targetIndex = 0
+      gltfSlideIndex = 0
+      _frontStackYawSmoothedForIndex = -1
+      cards = createCardsForGroup(children, parentIndexForLabels)
+      cardMeshes = cards.map((g) => g.userData.hitMesh)
+      setBackgroundForPath()
+      syncSlideTimeline()
+      resetAllCardRenderOrders()
+      setCardRenderOrder(cards[0], 2)
+
+      const childSlot0 = slotPositions[0]
+      const childAxis = getPageTurnAxis(childSlot0)
+      const childRestX = childSlot0.x
+      const childN = children.length
+      setCardPageTurnState(cards[0], childAxis, -Math.PI / 2, childRestX)
+      setCardOpacity(cards[0], 0)
+      for (let i = 1; i < childN; i++) {
+        cards[i].position.set(childSlot0.x, childSlot0.y ?? 0, childSlot0.z - COLLAPSE_OFFSET_Z * i)
+        setCardOpacity(cards[i], 0)
+      }
+
+      requestAnimationFrame(() => {
+        const tl = gsap.timeline({ onComplete: endEnterChild, onKill: killEnterChild })
+        activeTimeline = tl
+        const slot = slotPositions[0]
+        const cAxis = getPageTurnAxis(slot)
+        const cRestX = slot.x
+        const cn = children.length
+
+        const angleIn = { value: -Math.PI / 2 }
+        const opacityIn = { value: 0 }
+        tl.to(angleIn, {
+          value: 0,
+          duration: TRANSITION_PAGE_TURN_IN_DURATION,
+          ease: EASE,
+          onUpdate: () => {
+            setCardPageTurnState(cards[0], cAxis, angleIn.value, cRestX)
+            setCardOpacity(cards[0], opacityIn.value)
+          },
+        })
+        tl.to(opacityIn, {
+          value: 1,
+          duration: TRANSITION_PAGE_TURN_IN_DURATION,
+          ease: EASE,
+          onUpdate: () => setCardOpacity(cards[0], opacityIn.value),
+        }, '<')
+
+        if (cn > 1) {
+          for (let i = 1; i < cn; i++) {
+            const s = slotPositions[i]
+            tl.to(cards[i].position, {
+              x: s.x,
+              y: s.y ?? 0,
+              z: s.z,
+              duration: TRANSITION_UNCROLL_DURATION,
+              ease: EASE,
+            }, '<')
+            const op = { value: 0 }
+            tl.to(op, {
+              value: 1,
+              duration: TRANSITION_UNCROLL_DURATION,
+              onUpdate: () => setCardOpacity(cards[i], op.value),
+            }, '<')
+          }
+        }
+      })
+    },
+    onKill: killEnterChild,
   })
 
   // 1. Collapse only the slides to the right of the selected one (currentIndex) behind it, and fade them out
@@ -1778,71 +3125,6 @@ function enterChildWithTransition() {
     ease: EASE,
     onUpdate: () => setCardOpacity(frontCard, opacityOut.value),
   }, '<')
-
-  // 3. Swap to child group and set initial state, then run page-in and uncroll
-  const parentIndexForLabels = currentIndex
-  activeTimeline.add(() => {
-    removeCardsFromScene(cards)
-    path.push({ group: children, parentIndex: parentIndexForLabels })
-    slotPositions = getSlotPositions(children.length)
-    currentIndex = 0
-    targetIndex = 0
-    cards = createCardsForGroup(children, parentIndexForLabels)
-    cardMeshes = cards.map((g) => g.userData.hitMesh)
-    setBackgroundForPath()
-
-    const childSlot0 = slotPositions[0]
-    const childAxis = getPageTurnAxis(childSlot0)
-    const childRestX = childSlot0.x
-    const childN = children.length
-
-    // First subslide: turned in from opposite side (angle -PI/2)
-    setCardPageTurnState(cards[0], childAxis, -Math.PI / 2, childRestX)
-    setCardOpacity(cards[0], 0)
-    for (let i = 1; i < childN; i++) {
-      cards[i].position.set(childSlot0.x, childSlot0.y ?? 0, childSlot0.z - COLLAPSE_OFFSET_Z * i)
-      setCardOpacity(cards[i], 0)
-    }
-
-    // 4. First subslide page-turn in
-    const angleIn = { value: -Math.PI / 2 }
-    const opacityIn = { value: 0 }
-    activeTimeline.to(angleIn, {
-      value: 0,
-      duration: TRANSITION_PAGE_TURN_IN_DURATION,
-      ease: EASE,
-      onUpdate: () => {
-        setCardPageTurnState(cards[0], childAxis, angleIn.value, childRestX)
-        setCardOpacity(cards[0], opacityIn.value)
-      },
-    })
-    activeTimeline.to(opacityIn, {
-      value: 1,
-      duration: TRANSITION_PAGE_TURN_IN_DURATION,
-      ease: EASE,
-      onUpdate: () => setCardOpacity(cards[0], opacityIn.value),
-    }, '<')
-
-    // 5. Uncollapse rest to the right
-    if (childN > 1) {
-      for (let i = 1; i < childN; i++) {
-        const slot = slotPositions[i]
-        activeTimeline.to(cards[i].position, {
-          x: slot.x,
-            y: slot.y ?? 0,
-            z: slot.z,
-          duration: TRANSITION_UNCROLL_DURATION,
-          ease: EASE,
-        }, '<')
-        const op = { value: 0 }
-        activeTimeline.to(op, {
-          value: 1,
-          duration: TRANSITION_UNCROLL_DURATION,
-          onUpdate: () => setCardOpacity(cards[i], op.value),
-        }, '<')
-      }
-    }
-  })
 }
 
 function goBackWithTransition() {
@@ -1854,6 +3136,8 @@ function goBackWithTransition() {
   const slot0 = slotPositions[0]
   const axis = getPageTurnAxis(slot0)
   const restX = slot0.x
+  resetAllCardRenderOrders()
+  setCardRenderOrder(cards[0], 2)
 
   // Phase 1: collapse + page-out only. Phase 2 (swap + page-in) runs in onComplete so it always plays.
   activeTimeline = gsap.timeline({
@@ -1871,6 +3155,7 @@ function goBackWithTransition() {
       gltfSlideIndex = frontIndex
       cards = createCardsForGroup(parentGroup, parentIndexForLabels)
       cardMeshes = cards.map((g) => g.userData.hitMesh)
+      syncSlideTimeline()
       requestAnimationFrame(() => setBackgroundForPath())
 
       const parentSlot0 = slotPositions[0]
@@ -1880,9 +3165,9 @@ function goBackWithTransition() {
 
       for (let i = 0; i < parentN; i++) {
         setCardOpacity(cards[i], 0)
-        cards[i].renderOrder = 0
       }
-      cards[frontIndex].renderOrder = 1
+      resetAllCardRenderOrders()
+      setCardRenderOrder(cards[frontIndex], 2)
 
       const vanish = getVanishPosition()
       for (let i = 0; i < frontIndex; i++) {
@@ -1902,12 +3187,12 @@ function goBackWithTransition() {
         const opacityIn = { value: 0 }
         activeTimeline = gsap.timeline({
           onComplete: () => {
-            cards.forEach((c) => { c.renderOrder = 0 })
+            resetAllCardRenderOrders()
             activeTimeline = null
             isTransitioning = false
           },
           onKill: () => {
-            if (cards.length) cards.forEach((c) => { c.renderOrder = 0 })
+            resetAllCardRenderOrders()
             activeTimeline = null
             isTransitioning = false
           },
@@ -1947,7 +3232,7 @@ function goBackWithTransition() {
       })
     },
     onKill: () => {
-      if (cards.length) cards.forEach((c) => { c.renderOrder = 0 })
+      resetAllCardRenderOrders()
       activeTimeline = null
       isTransitioning = false
     },
@@ -2140,7 +3425,7 @@ function navigateRight() {
     bumpLogoSpinStimulus(1)
     return
   }
-  const newTarget = Math.min(lastSlideIndex(), targetIndex + 1)
+  const newTarget = Math.min(lastSlideIndex(), currentIndex + 1)
   if (newTarget === targetIndex) return
   targetIndex = newTarget
   logoSlideNavDir = 1
@@ -2158,7 +3443,7 @@ function navigateLeft() {
     bumpLogoSpinStimulus(-1)
     return
   }
-  const newTarget = Math.max(0, targetIndex - 1)
+  const newTarget = Math.max(0, currentIndex - 1)
   if (newTarget === targetIndex) return
   targetIndex = newTarget
   logoSlideNavDir = -1
@@ -2176,6 +3461,7 @@ let swipePointerId = null
 let suppressNextCanvasClick = false
 
 window.addEventListener('keydown', (e) => {
+  if (isTextPanelVisualEditActive()) return
   if (e.key === 'ArrowRight') {
     e.preventDefault()
     navigateRight()
@@ -2198,6 +3484,10 @@ const WHEEL_THRESHOLD = 7
 const WHEEL_COOLDOWN_MS = 10
 if (layoutProfile.useWheelNav) {
   window.addEventListener('wheel', (e) => {
+    if (isTextPanelVisualEditActive()) {
+      e.preventDefault()
+      return
+    }
     if (Date.now() < wheelCooldownUntil) {
       e.preventDefault()
       wheelAccum = 0
@@ -2227,6 +3517,7 @@ const CANVAS_TAP_SLOP_PX = 16
  * @param {number} clientY
  */
 function performCanvasSlidePick(clientX, clientY) {
+  if (isTextPanelVisualEditActive()) return
   if (isTransitioning || isStackScrubInteracting()) return
   const el = renderer.domElement
   const rect = el.getBoundingClientRect()
@@ -2277,6 +3568,7 @@ renderer.domElement.addEventListener('pointerleave', () => {
   hoverFrontPop = false
 })
 renderer.domElement.addEventListener('pointermove', (e) => {
+  if (isTextPanelVisualEditActive()) return
   pointerIsOverCanvas = true
   if (!layoutProfile.useSwipeNav || isTransitioning || cards.length === 0) {
     updateSlideHoverFromPointer(e.clientX, e.clientY)
@@ -2341,6 +3633,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 })
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (isTextPanelVisualEditActive()) return
   if (layoutProfile.clearHoverOnPointerEnd) activeCanvasPointerId = e.pointerId
   if (layoutProfile.useSwipeNav && e.isPrimary) {
     swipePointerId = e.pointerId
@@ -2410,6 +3703,7 @@ window.addEventListener('pointercancel', (e) => {
 
 if (layoutProfile.useWindowParallax) {
   window.addEventListener('pointermove', (e) => {
+    if (isTextPanelVisualEditActive()) return
     setCameraParallaxFromClient(e.clientX, e.clientY)
   }, { passive: true })
 }
@@ -2463,63 +3757,80 @@ function stepBackgroundVideoPlayback() {
 
 function animate() {
   requestAnimationFrame(animate)
+  const tpEdit = isTextPanelVisualEditActive()
+  if (tpEdit) {
+    pointerIsOverCanvas = false
+    hoverTiltTargetX = 0
+    hoverTiltTargetY = 0
+    hoverDeepIndex = -1
+    hoverFrontPop = false
+    stackDragActive = false
+    stackDragCandidate = false
+  }
+
   const delta = clock.getDelta()
-  animationMixers.forEach((m) => m.update(delta))
+  if (!tpEdit) {
+    animationMixers.forEach((m) => m.update(delta))
+  }
   if (sitIdleVideoTexture?.image?.readyState >= 2) sitIdleVideoTexture.needsUpdate = true
   const total = numSlides()
   slideCounterEl.textContent = `${targetIndex + 1} of ${total}`
 
-  if (logoSlideNavDir !== 0) {
-    logoLastSpinDir = logoSlideNavDir
-  }
+  if (!tpEdit) {
+    if (logoSlideNavDir !== 0) {
+      logoLastSpinDir = logoSlideNavDir
+    }
 
-  if (logoNavStimulus < logoNavStimulusTarget) {
-    const rise = 1 - Math.exp(-LOGO_STIMULUS_SMOOTH_UP * delta)
-    logoNavStimulus += (logoNavStimulusTarget - logoNavStimulus) * rise
-    if (Math.abs(logoNavStimulusTarget - logoNavStimulus) < 1e-4) logoNavStimulus = logoNavStimulusTarget
-  } else {
-    logoNavStimulus *= Math.exp(-LOGO_STIMULUS_DECAY * delta)
-    if (logoNavStimulus < 1e-4) logoNavStimulus = 0
-  }
-  logoNavStimulusTarget *= Math.exp(-LOGO_STIMULUS_DECAY * delta)
-  if (logoNavStimulusTarget < 1e-4) logoNavStimulusTarget = 0
+    if (logoNavStimulus < logoNavStimulusTarget) {
+      const rise = 1 - Math.exp(-LOGO_STIMULUS_SMOOTH_UP * delta)
+      logoNavStimulus += (logoNavStimulusTarget - logoNavStimulus) * rise
+      if (Math.abs(logoNavStimulusTarget - logoNavStimulus) < 1e-4) logoNavStimulus = logoNavStimulusTarget
+    } else {
+      logoNavStimulus *= Math.exp(-LOGO_STIMULUS_DECAY * delta)
+      if (logoNavStimulus < 1e-4) logoNavStimulus = 0
+    }
+    logoNavStimulusTarget *= Math.exp(-LOGO_STIMULUS_DECAY * delta)
+    if (logoNavStimulusTarget < 1e-4) logoNavStimulusTarget = 0
 
-  const omegaTarget =
-    logoLastSpinDir * (LOGO_IDLE_OMEGA + LOGO_NAV_PEAK_EXTRA * logoNavStimulus)
-  const omegaErr = omegaTarget - logoAngularVelocity
-  const reversing =
-    Math.sign(omegaTarget) !== Math.sign(logoAngularVelocity) &&
-    Math.abs(logoAngularVelocity) > 0.05 &&
-    Math.abs(omegaTarget) > 0.05
-  const speedingUp = Math.abs(omegaTarget) > Math.abs(logoAngularVelocity)
-  const excessDecaying =
-    Math.abs(logoAngularVelocity) > Math.abs(omegaTarget) + 0.02 &&
-    Math.sign(logoAngularVelocity) === Math.sign(omegaTarget)
-  const logoRamp = reversing || speedingUp ? LOGO_RAMP_UP : excessDecaying ? LOGO_COAST_DECAY : LOGO_RAMP_DOWN
-  logoAngularVelocity += omegaErr * Math.min(1, logoRamp * delta)
-  logoAngularVelocity = THREE.MathUtils.clamp(logoAngularVelocity, -LOGO_MAX_OMEGA, LOGO_MAX_OMEGA)
-  logoSpinAngle += logoAngularVelocity * delta
+    const omegaTarget =
+      logoLastSpinDir * (LOGO_IDLE_OMEGA + LOGO_NAV_PEAK_EXTRA * logoNavStimulus)
+    const omegaErr = omegaTarget - logoAngularVelocity
+    const reversing =
+      Math.sign(omegaTarget) !== Math.sign(logoAngularVelocity) &&
+      Math.abs(logoAngularVelocity) > 0.05 &&
+      Math.abs(omegaTarget) > 0.05
+    const speedingUp = Math.abs(omegaTarget) > Math.abs(logoAngularVelocity)
+    const excessDecaying =
+      Math.abs(logoAngularVelocity) > Math.abs(omegaTarget) + 0.02 &&
+      Math.sign(logoAngularVelocity) === Math.sign(omegaTarget)
+    const logoRamp = reversing || speedingUp ? LOGO_RAMP_UP : excessDecaying ? LOGO_COAST_DECAY : LOGO_RAMP_DOWN
+    logoAngularVelocity += omegaErr * Math.min(1, logoRamp * delta)
+    logoAngularVelocity = THREE.MathUtils.clamp(logoAngularVelocity, -LOGO_MAX_OMEGA, LOGO_MAX_OMEGA)
+    logoSpinAngle += logoAngularVelocity * delta
 
-  if (VIDEO_LOGO_LINKED_PLAYBACK) {
-    const videoRateTarget = VIDEO_PLAYBACK_IDLE + VIDEO_PLAYBACK_PEAK_EXTRA * logoNavStimulus
-    const videoRateErr = videoRateTarget - videoSignedPlaybackRate
-    const videoSpeedingUp = videoRateTarget > videoSignedPlaybackRate
-    const videoExcessDecaying =
-      videoSignedPlaybackRate > videoRateTarget + 0.02
-    const videoRamp = videoSpeedingUp
-      ? VIDEO_SPEED_RAMP_UP
-      : videoExcessDecaying
-        ? LOGO_COAST_DECAY
-        : LOGO_RAMP_DOWN
-    videoSignedPlaybackRate += videoRateErr * Math.min(1, videoRamp * delta)
-    videoSignedPlaybackRate = THREE.MathUtils.clamp(
-      videoSignedPlaybackRate,
-      0,
-      VIDEO_MAX_SIGNED_RATE
-    )
+    if (VIDEO_LOGO_LINKED_PLAYBACK) {
+      const videoRateTarget = VIDEO_PLAYBACK_IDLE + VIDEO_PLAYBACK_PEAK_EXTRA * logoNavStimulus
+      const videoRateErr = videoRateTarget - videoSignedPlaybackRate
+      const videoSpeedingUp = videoRateTarget > videoSignedPlaybackRate
+      const videoExcessDecaying =
+        videoSignedPlaybackRate > videoRateTarget + 0.02
+      const videoRamp = videoSpeedingUp
+        ? VIDEO_SPEED_RAMP_UP
+        : videoExcessDecaying
+          ? LOGO_COAST_DECAY
+          : LOGO_RAMP_DOWN
+      videoSignedPlaybackRate += videoRateErr * Math.min(1, videoRamp * delta)
+      videoSignedPlaybackRate = THREE.MathUtils.clamp(
+        videoSignedPlaybackRate,
+        0,
+        VIDEO_MAX_SIGNED_RATE
+      )
+    }
   }
   stepBackgroundVideoPlayback()
-  stepCameraParallax(delta)
+  if (!tpEdit) {
+    stepCameraParallax(delta)
+  }
 
   _slideCounterPos.set(SLIDE_COUNTER_X, SLIDE_COUNTER_Y, 0).project(camera)
   const px = (_slideCounterPos.x * 0.5 + 0.5) * window.innerWidth
@@ -2527,15 +3838,30 @@ function animate() {
   slideCounterEl.style.left = `${px}px`
   slideCounterEl.style.top = `${py}px`
   const pathIndices = path.slice(1).map((p) => p.parentIndex)
-  updateSlideArtEffects()
-  syncSlideStackRotations(delta)
-  stepAndApplyFrontSlideHoverTilt(delta)
-  stepAndApplyDeepSlideHover(delta)
-  stepAndApplyFrontSlideHoverPop(delta)
+  if (!tpEdit) {
+    updateSlideArtEffects()
+    updateSlideTextPanelStackVisuals()
+    if (
+      !activeTimeline &&
+      targetIndex !== currentIndex &&
+      Math.abs(gltfSlideIndex - currentIndex) < 0.02
+    ) {
+      targetIndex = currentIndex
+    }
+    updateSlideTimeline(slideTimelineGroup, gltfSlideIndex, camera, undefined, currentIndex, targetIndex)
+  }
+  if (!tpEdit) {
+    syncSlideStackRotations(delta)
+    stepAndApplyFrontSlideHoverTilt(delta)
+    stepAndApplyDeepSlideHover(delta)
+    stepAndApplyFrontSlideHoverPop(delta)
+  }
   const context = { numSlides: total, gltfSlideIndex, camera, pathIndices, logoSpinAngle }
-  sceneObjectConfigs.forEach((objConfig) => {
-    if (objConfig.model) applySceneObjectBehaviour(objConfig.model, objConfig, context)
-  })
+  if (!tpEdit) {
+    sceneObjectConfigs.forEach((objConfig) => {
+      if (objConfig.model) applySceneObjectBehaviour(objConfig.model, objConfig, context)
+    })
+  }
   renderer.render(scene, camera)
   if (overlayScene.children.length > 0) {
     renderer.autoClear = false
@@ -2548,3 +3874,31 @@ function animate() {
 
 switchToGroup(ROOT_GROUP, null, 0)
 animate()
+
+if (import.meta.env.DEV) {
+  import('./textPanelEditor.js').then(({ initTextPanelEditor }) => {
+    initTextPanelEditor({
+      getContext: () => {
+        const g = currentGroup()
+        const node = g[currentIndex]
+        const card = cards[currentIndex]
+        if (!node || !card) return null
+        return {
+          node,
+          card,
+          pathLabel: getDevTextEditorSlidePathLabel(),
+          editorKey: `${path.length}|${currentIndex}|${node.name ?? ''}`,
+        }
+      },
+      getTextPanelStorageKey: () =>
+        buildTextPanelStorageKey(layoutProfile.id, desktopPageId, path, currentIndex),
+      refresh: ({ node, card }) => refreshSlideTextPanelsOnCard(card, node),
+      getThree: () => ({
+        camera,
+        scene,
+        renderer,
+        getInnerSize: getSlideCardInnerSize,
+      }),
+    })
+  })
+}

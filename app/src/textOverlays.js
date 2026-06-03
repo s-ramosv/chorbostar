@@ -57,6 +57,56 @@ export const TEXT_OVERLAYS_DESKTOP = [
   },
 ]
 
+/** Desktop `/desk-alt` page — independent copy; edit like `TEXT_OVERLAYS_DESKTOP`. */
+export const TEXT_OVERLAYS_DESKTOP_ALT = [
+  {
+    text: 'linkedin',
+    fontSize: '20px',
+    dock: 'top-right',
+    right: '893px',
+    top: topOffset,
+    fontWeight: 500,
+    tracking: '-0.04em',
+    href: 'https://www.linkedin.com/in/samu-rv/',
+  },
+  {
+    text: 'google scholar',
+    fontSize: '20px',
+    dock: 'top-right',
+    right: '620px',
+    top: topOffset,
+    fontWeight: 500,
+    tracking: '-0.04em',
+    href: 'https://scholar.google.es/citations?user=qJpBQDQAAAAJ&hl=es',
+  },
+  {
+    text: 'cv',
+    fontSize: '20px',
+    right: '810px',
+    top: topOffset,
+    fontWeight: 500,
+    tracking: '-0.04em',
+    href: publicAsset('download/SamuelRV-CV-240326.pdf'),
+    download: 'Samuel-Ramos-Varela-CV.pdf',
+  },
+  {
+    text: 'samuel ramos varela',
+    dock: 'top-right',
+    top: topOffset,
+    right: '20px',
+    fontSize: '18px',
+    fontWeight: 500,
+    tracking: '-0.04em',
+  },
+]
+
+/**
+ * @param {'default' | 'alt'} desktopPageId
+ */
+export function getDesktopTextOverlaysForPage(desktopPageId) {
+  return desktopPageId === 'alt' ? TEXT_OVERLAYS_DESKTOP_ALT : TEXT_OVERLAYS_DESKTOP
+}
+
 /**
  * Mobile: each line is positioned independently — edit **`top`** and **`right`** per item (CSS strings).
  * Smaller `right` = closer to the right edge; larger `right` = further left. Share one `MOBILE_TEXT_TOP` or set `top` per item.

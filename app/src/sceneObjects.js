@@ -5,7 +5,7 @@ import * as THREE from 'three'
  *
  * **Desktop vs mobile:** edit `SCENE_OBJECT_CONFIGS_DESKTOP` and `SCENE_OBJECT_CONFIGS_MOBILE`.
  * Mobile can list fewer objects, different URLs, or the same ids with different `scale` / `position` / `rotation`.
- * Use `getSceneObjectConfigsForProfile('mobile' | 'desktop')` (or `layoutProfile.id` from main).
+ * Use `getSceneObjectConfigsForProfile('mobile' | 'desktop', desktopPageId?)` (see `desktopPage.js`).
  *
  * Config shape:
  * - url: string – path to .gltf or .glb
@@ -47,6 +47,28 @@ export const SCENE_OBJECT_CONFIGS_DESKTOP = [
 ]
 
 /**
+ * Second desktop “page” (`/desk-alt`): tune independently of `SCENE_OBJECT_CONFIGS_DESKTOP`.
+ */
+export const SCENE_OBJECT_CONFIGS_DESKTOP_ALT = [
+  {
+    id: 'xbox-logo',
+    url: '/assets/3D/xbox_logo-2/scene.gltf',
+    scale: 0.75,
+    scene: 'overlay',
+    alwaysOnTop: true,
+    position: {
+      mode: 'camera',
+      distance: 5,
+      offsetX: 6.2,
+      offsetY: -3.2,
+    },
+    rotation: { mode: 'velocitySpin', initialY: 2.35, initialX: 1, initialZ: 0 },
+    materialRoughness: 0.0,
+    materialMetalness: 0.5,
+  },
+]
+
+/**
  * Portrait / touch layout: tune or omit models independently of desktop.
  * Use `[]` to load no GLTF scene objects on mobile.
  */
@@ -71,9 +93,12 @@ export const SCENE_OBJECT_CONFIGS_MOBILE = [
 
 /**
  * @param {'desktop' | 'mobile'} profileId
+ * @param {'default' | 'alt'} [desktopPageId] — from `resolveDesktopPageId` (desktop only)
  */
-export function getSceneObjectConfigsForProfile(profileId) {
-  return profileId === 'mobile' ? SCENE_OBJECT_CONFIGS_MOBILE : SCENE_OBJECT_CONFIGS_DESKTOP
+export function getSceneObjectConfigsForProfile(profileId, desktopPageId = 'default') {
+  if (profileId === 'mobile') return SCENE_OBJECT_CONFIGS_MOBILE
+  if (profileId === 'desktop' && desktopPageId === 'alt') return SCENE_OBJECT_CONFIGS_DESKTOP_ALT
+  return SCENE_OBJECT_CONFIGS_DESKTOP
 }
 
 /** @deprecated Use SCENE_OBJECT_CONFIGS_DESKTOP or getSceneObjectConfigsForProfile */
