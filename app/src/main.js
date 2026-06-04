@@ -145,7 +145,7 @@ container.appendChild(renderer.domElement)
 container.setAttribute('data-layout-profile', layoutProfile.id)
 if (layoutProfile.id === 'desktop') {
   container.setAttribute('data-desktop-page', desktopPageId)
-  document.title = desktopPageId === 'alt' ? 'chorbostar' : 'chorbostar — music'
+  document.title = 'Samuel Ramos Varela Portfolio'
 }
 
 // Background layer elements (video, image, or custom per config)
