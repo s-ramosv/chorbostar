@@ -15,7 +15,7 @@ import { loadGltfModel } from './gltfModel.js'
 import { getSceneObjectConfigsForProfile, applySceneObjectBehaviour } from './sceneObjects.js'
 import {
   mountTextOverlays,
-  getDesktopTextOverlaysForPage,
+  getTextOverlaysForLayout,
   TEXT_OVERLAY_FONT_FAMILY,
 } from './textOverlays.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
@@ -40,7 +40,9 @@ const layoutProfile = resolveLayoutProfile()
 const desktopPageId = resolveDesktopPageId(layoutProfile.id)
 const contentPageId = getContentPageId(layoutProfile.id, desktopPageId)
 const slidesStructure = getSlidesStructureForPage(layoutProfile.id, desktopPageId)
-const effectiveLayout = mergeDesktopLayoutPatch(layoutProfile, getDesktopLayoutPatch(contentPageId))
+const layoutPatch =
+  layoutProfile.id === 'desktop' ? getDesktopLayoutPatch(contentPageId) : null
+const effectiveLayout = mergeDesktopLayoutPatch(layoutProfile, layoutPatch)
 const sceneObjectConfigs = getSceneObjectConfigsForProfile(layoutProfile.id, contentPageId)
 const sitIdleCharacter = getSitIdleCharacterConfig(layoutProfile.id, contentPageId)
 const DEFAULT_FRONT_SLIDE_HOVER_TILT = Object.freeze({
@@ -51,7 +53,9 @@ const DEFAULT_FRONT_SLIDE_HOVER_TILT = Object.freeze({
 })
 const frontSlideHoverTilt = {
   ...DEFAULT_FRONT_SLIDE_HOVER_TILT,
-  ...(getDesktopFrontSlideHoverTiltPatch(contentPageId) ?? {}),
+  ...(layoutProfile.id === 'desktop'
+    ? (getDesktopFrontSlideHoverTiltPatch(contentPageId) ?? {})
+    : {}),
 }
 
 // Scene (no solid background so the background video shows through)
@@ -144,10 +148,11 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
 renderer.setClearColor(0x000000, 0)
 container.appendChild(renderer.domElement)
 container.setAttribute('data-layout-profile', layoutProfile.id)
+container.setAttribute('data-content-page', contentPageId)
 if (layoutProfile.id === 'desktop') {
   container.setAttribute('data-desktop-page', contentPageId)
-  document.title = 'Samuel Ramos Varela Portfolio'
 }
+document.title = 'Samuel Ramos Varela Portfolio'
 
 // Background layer elements (video, image, or custom per config)
 const bgVideo = document.getElementById('bg-video')
@@ -210,7 +215,7 @@ if (hb) {
 
 mountTextOverlays(container, {
   viewportTextPx: VIEWPORT_UI_TEXT_PX,
-  overlays: getDesktopTextOverlaysForPage(contentPageId),
+  overlays: getTextOverlaysForLayout(layoutProfile.id, contentPageId),
 })
 
 {

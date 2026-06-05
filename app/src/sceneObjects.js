@@ -95,9 +95,8 @@ export const SCENE_OBJECT_CONFIGS_MOBILE = [
  * @param {'desktop' | 'mobile'} profileId
  * @param {'default' | 'alt'} [desktopPageId] — from `resolveDesktopPageId` (desktop only)
  */
-export function getSceneObjectConfigsForProfile(profileId, desktopPageId = 'default') {
-  const pageId = profileId === 'mobile' ? 'default' : desktopPageId
-  if (profileId === 'desktop' && pageId === 'alt') return SCENE_OBJECT_CONFIGS_DESKTOP_ALT
+export function getSceneObjectConfigsForProfile(profileId, contentPageId = 'default') {
+  if (contentPageId === 'alt') return SCENE_OBJECT_CONFIGS_DESKTOP_ALT
   return SCENE_OBJECT_CONFIGS_DESKTOP
 }
 

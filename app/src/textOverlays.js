@@ -141,6 +141,53 @@ export const TEXT_OVERLAYS_MOBILE = [
   },
 ]
 
+/** Mobile layout + alt page links (google scholar, same CV as desktop alt). */
+export const TEXT_OVERLAYS_MOBILE_ALT = [
+  {
+    text: 'samuel ramos varela',
+    top: MOBILE_TEXT_TOP,
+    right: 'max(10px, env(safe-area-inset-right))',
+    fontWeight: 500,
+    tracking: '-0.04em',
+  },
+  {
+    text: 'linkedin',
+    top: MOBILE_TEXT_TOP,
+    left: 'calc(clamp(10px, 12vmin, 72px))',
+    fontWeight: 500,
+    tracking: '-0.04em',
+    href: 'https://www.linkedin.com/in/samu-rv/',
+  },
+  {
+    text: 'google scholar',
+    top: MOBILE_TEXT_TOP,
+    left: 'calc(clamp(10px, 38vmin, 200px))',
+    fontWeight: 500,
+    tracking: '-0.04em',
+    href: 'https://scholar.google.es/citations?user=qJpBQDQAAAAJ&hl=es',
+  },
+  {
+    text: 'cv',
+    top: MOBILE_TEXT_TOP,
+    right: 'max(240px, env(safe-area-inset-right))',
+    fontWeight: 500,
+    tracking: '-0.04em',
+    href: publicAsset('download/CV03062025-2.pdf'),
+    download: 'CV03062025-2.pdf',
+  },
+]
+
+/**
+ * @param {'desktop' | 'mobile'} layoutProfileId
+ * @param {'default' | 'alt'} contentPageId
+ */
+export function getTextOverlaysForLayout(layoutProfileId, contentPageId) {
+  if (layoutProfileId === 'mobile') {
+    return contentPageId === 'alt' ? TEXT_OVERLAYS_MOBILE_ALT : TEXT_OVERLAYS_MOBILE
+  }
+  return getDesktopTextOverlaysForPage(contentPageId)
+}
+
 /** @deprecated Use TEXT_OVERLAYS_DESKTOP or pass `overlays` to mountTextOverlays */
 export const TEXT_OVERLAYS = TEXT_OVERLAYS_DESKTOP
 

@@ -1,6 +1,6 @@
 /**
  * Desktop-only parallel “pages”: same app bundle, different slides + optional layout / GLTF / overlays.
- * Mobile always uses the default slides bundle (`slides-structure.json`).
+ * Mobile uses the **alt** content bundle (`slides-structure-desktop-alt.json`) with the mobile touch layout.
  *
  * **Production routes** (desktop): `/` → alt (chorbostar.com landing); `/music` → default (original).
  * **Legacy paths** `/desk-alt` and `/alt` also load alt (Netlify may 301 them to `/`).
@@ -209,14 +209,14 @@ export function resolveDesktopPageId(layoutProfileId) {
 
 /**
  * Content page id for slides, overlays, GLTF, sit-idle, etc.
- * Mobile always uses default desktop content (`/music`), never alt.
+ * Mobile always uses **alt** content (same slides/arts as desktop `/`); desktop routes pick default vs alt.
  *
  * @param {'desktop' | 'mobile'} layoutProfileId
  * @param {DesktopPageId} desktopPageId — from `resolveDesktopPageId` (desktop only)
  * @returns {DesktopPageId}
  */
 export function getContentPageId(layoutProfileId, desktopPageId) {
-  if (layoutProfileId === 'mobile') return DESKTOP_PAGE_DEFAULT
+  if (layoutProfileId === 'mobile') return DESKTOP_PAGE_ALT
   return desktopPageId
 }
 
@@ -226,7 +226,6 @@ export function getContentPageId(layoutProfileId, desktopPageId) {
  */
 export function getSlidesStructureForPage(layoutProfileId, pageId) {
   const contentPageId = getContentPageId(layoutProfileId, pageId)
-  if (layoutProfileId !== 'desktop') return slidesDefault
   return contentPageId === DESKTOP_PAGE_ALT ? slidesAlt : slidesDefault
 }
 

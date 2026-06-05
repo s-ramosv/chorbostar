@@ -66,8 +66,7 @@ export const SIT_IDLE_CHARACTER_MOBILE = {
  * @param {'default' | 'alt'} [desktopPageId] — from `resolveDesktopPageId` (desktop only)
  * @returns {SitIdleCharacterConfig}
  */
-export function getSitIdleCharacterConfig(profileId, desktopPageId = 'default') {
-  const pageId = profileId === 'mobile' ? 'default' : desktopPageId
-  if (profileId === 'desktop' && pageId === 'alt') return SIT_IDLE_CHARACTER_DESKTOP_ALT
+export function getSitIdleCharacterConfig(profileId, contentPageId = 'default') {
+  if (contentPageId === 'alt') return SIT_IDLE_CHARACTER_DESKTOP_ALT
   return SIT_IDLE_CHARACTER_DESKTOP
 }
