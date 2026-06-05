@@ -208,12 +208,26 @@ export function resolveDesktopPageId(layoutProfileId) {
 }
 
 /**
+ * Content page id for slides, overlays, GLTF, sit-idle, etc.
+ * Mobile always uses default desktop content (`/music`), never alt.
+ *
+ * @param {'desktop' | 'mobile'} layoutProfileId
+ * @param {DesktopPageId} desktopPageId — from `resolveDesktopPageId` (desktop only)
+ * @returns {DesktopPageId}
+ */
+export function getContentPageId(layoutProfileId, desktopPageId) {
+  if (layoutProfileId === 'mobile') return DESKTOP_PAGE_DEFAULT
+  return desktopPageId
+}
+
+/**
  * @param {'desktop' | 'mobile'} layoutProfileId
  * @param {DesktopPageId} pageId
  */
 export function getSlidesStructureForPage(layoutProfileId, pageId) {
+  const contentPageId = getContentPageId(layoutProfileId, pageId)
   if (layoutProfileId !== 'desktop') return slidesDefault
-  return pageId === DESKTOP_PAGE_ALT ? slidesAlt : slidesDefault
+  return contentPageId === DESKTOP_PAGE_ALT ? slidesAlt : slidesDefault
 }
 
 /**

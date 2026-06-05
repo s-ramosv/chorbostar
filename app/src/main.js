@@ -15,7 +15,6 @@ import { loadGltfModel } from './gltfModel.js'
 import { getSceneObjectConfigsForProfile, applySceneObjectBehaviour } from './sceneObjects.js'
 import {
   mountTextOverlays,
-  TEXT_OVERLAYS_MOBILE,
   getDesktopTextOverlaysForPage,
   TEXT_OVERLAY_FONT_FAMILY,
 } from './textOverlays.js'
@@ -24,6 +23,7 @@ import { resolveLayoutProfile } from './layoutProfile.js'
 import { getSitIdleCharacterConfig } from './sitIdleCharacterConfig.js'
 import {
   resolveDesktopPageId,
+  getContentPageId,
   getSlidesStructureForPage,
   getDesktopLayoutPatch,
   mergeDesktopLayoutPatch,
@@ -38,10 +38,11 @@ import { buildSlideTimeline, updateSlideTimeline } from './slideTimeline.js'
 
 const layoutProfile = resolveLayoutProfile()
 const desktopPageId = resolveDesktopPageId(layoutProfile.id)
+const contentPageId = getContentPageId(layoutProfile.id, desktopPageId)
 const slidesStructure = getSlidesStructureForPage(layoutProfile.id, desktopPageId)
-const effectiveLayout = mergeDesktopLayoutPatch(layoutProfile, getDesktopLayoutPatch(desktopPageId))
-const sceneObjectConfigs = getSceneObjectConfigsForProfile(layoutProfile.id, desktopPageId)
-const sitIdleCharacter = getSitIdleCharacterConfig(layoutProfile.id, desktopPageId)
+const effectiveLayout = mergeDesktopLayoutPatch(layoutProfile, getDesktopLayoutPatch(contentPageId))
+const sceneObjectConfigs = getSceneObjectConfigsForProfile(layoutProfile.id, contentPageId)
+const sitIdleCharacter = getSitIdleCharacterConfig(layoutProfile.id, contentPageId)
 const DEFAULT_FRONT_SLIDE_HOVER_TILT = Object.freeze({
   enabled: true,
   maxX: 0.05,
@@ -50,7 +51,7 @@ const DEFAULT_FRONT_SLIDE_HOVER_TILT = Object.freeze({
 })
 const frontSlideHoverTilt = {
   ...DEFAULT_FRONT_SLIDE_HOVER_TILT,
-  ...(getDesktopFrontSlideHoverTiltPatch(desktopPageId) ?? {}),
+  ...(getDesktopFrontSlideHoverTiltPatch(contentPageId) ?? {}),
 }
 
 // Scene (no solid background so the background video shows through)
@@ -144,7 +145,7 @@ renderer.setClearColor(0x000000, 0)
 container.appendChild(renderer.domElement)
 container.setAttribute('data-layout-profile', layoutProfile.id)
 if (layoutProfile.id === 'desktop') {
-  container.setAttribute('data-desktop-page', desktopPageId)
+  container.setAttribute('data-desktop-page', contentPageId)
   document.title = 'Samuel Ramos Varela Portfolio'
 }
 
@@ -209,8 +210,7 @@ if (hb) {
 
 mountTextOverlays(container, {
   viewportTextPx: VIEWPORT_UI_TEXT_PX,
-  overlays:
-    layoutProfile.id === 'mobile' ? TEXT_OVERLAYS_MOBILE : getDesktopTextOverlaysForPage(desktopPageId),
+  overlays: getDesktopTextOverlaysForPage(contentPageId),
 })
 
 {
@@ -638,7 +638,7 @@ if (sitIdleCharacter.enabled) {
 // Tree from config (single source of truth)
 const ROOT_GROUP = slidesStructure.root
 if (import.meta.env.DEV) {
-  applyTextPanelOverridesToSlideTree(ROOT_GROUP, layoutProfile.id, desktopPageId)
+  applyTextPanelOverridesToSlideTree(ROOT_GROUP, layoutProfile.id, contentPageId)
 }
 
 function getChildren(node) {
@@ -3891,7 +3891,7 @@ if (import.meta.env.DEV) {
         }
       },
       getTextPanelStorageKey: () =>
-        buildTextPanelStorageKey(layoutProfile.id, desktopPageId, path, currentIndex),
+        buildTextPanelStorageKey(layoutProfile.id, contentPageId, path, currentIndex),
       refresh: ({ node, card }) => refreshSlideTextPanelsOnCard(card, node),
       getThree: () => ({
         camera,

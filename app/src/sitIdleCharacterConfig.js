@@ -67,7 +67,7 @@ export const SIT_IDLE_CHARACTER_MOBILE = {
  * @returns {SitIdleCharacterConfig}
  */
 export function getSitIdleCharacterConfig(profileId, desktopPageId = 'default') {
-  if (profileId === 'mobile') return SIT_IDLE_CHARACTER_MOBILE
-  if (profileId === 'desktop' && desktopPageId === 'alt') return SIT_IDLE_CHARACTER_DESKTOP_ALT
+  const pageId = profileId === 'mobile' ? 'default' : desktopPageId
+  if (profileId === 'desktop' && pageId === 'alt') return SIT_IDLE_CHARACTER_DESKTOP_ALT
   return SIT_IDLE_CHARACTER_DESKTOP
 }
